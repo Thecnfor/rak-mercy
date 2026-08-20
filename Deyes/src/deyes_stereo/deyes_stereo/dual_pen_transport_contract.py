@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import permutations
-from math import isfinite, sqrt
+from math import atan2, cos, isfinite, sin, sqrt
 from typing import Any
 
 from .dual_pen_cograsp_contract import WorkspaceBounds
@@ -62,7 +62,14 @@ class DualPenTransportProfile:
     retreat_offset_m: float = 0.12
     phase_timeout_sec: float = 5.0
     navigation_timeout_sec: float = 45.0
+    turn_timeout_sec: float = 30.0
+    turn_settling_margin_sec: float = 2.0
     max_barrier_skew_sec: float = 0.10
+    translation_x_tolerance_m: float = 0.02
+    translation_y_tolerance_m: float = 0.02
+    max_turn_angular_z_rad_s: float = 0.10
+    turn_yaw_tolerance_rad: float = 0.03490658503988659
+    turn_zero_confirmation_count: int = 5
     lift_vector_base_unit: tuple[float, float, float] | None = None
 
 
@@ -199,6 +206,42 @@ def _validate_pose(pose: NavigationPose, expected_id: str) -> str | None:
     return None
 
 
+def _shortest_yaw_delta(start_rad: float, target_rad: float) -> float:
+    return atan2(sin(target_rad - start_rad), cos(target_rad - start_rad))
+
+
+def _validate_turn_contract(evidence: Any, world: dict[str, Any], *, now_stamp_ns: int, max_age_ns: int) -> dict[str, Any]:
+    if not isinstance(evidence, dict):
+        return {"valid": False, "reason": "turn_safety_contract_missing", "reasons": ["turn_safety_contract_missing"]}
+    reasons: list[str] = []
+    for field in ("turn_safe_pose_confirmed", "collision_sweep_validated"):
+        if evidence.get(field) is not True:
+            reasons.append(f"{field}_required")
+    if evidence.get("source") != "isaac_sim_collision_sweep":
+        reasons.append("turn_safety_source_invalid")
+    if evidence.get("world_id") != world.get("world_id"):
+        reasons.append("turn_safety_world_id_mismatch")
+    if str(evidence.get("scene_sha256") or "").lower() != world.get("scene_sha256"):
+        reasons.append("turn_safety_scene_sha256_mismatch")
+    try:
+        seed = int(evidence.get("random_seed"))
+    except (TypeError, ValueError):
+        seed = -1
+    if seed != world.get("random_seed"):
+        reasons.append("turn_safety_random_seed_mismatch")
+    stamp = _stamp_ns(evidence)
+    if stamp <= 0 or stamp > now_stamp_ns or now_stamp_ns - stamp > max_age_ns:
+        reasons.append("turn_safety_contract_stale_or_invalid")
+    return {
+        "valid": not reasons,
+        "reason": "ok" if not reasons else reasons[0],
+        "reasons": reasons,
+        "turn_safe_pose_confirmed": evidence.get("turn_safe_pose_confirmed") is True,
+        "collision_sweep_validated": evidence.get("collision_sweep_validated") is True,
+        "physical_validated": False,
+    }
+
+
 def _profile_failure(profile: DualPenTransportProfile) -> str | None:
     if not profile.validated_for_simulation:
         return "simulation_site_profile_not_validated"
@@ -208,7 +251,10 @@ def _profile_failure(profile: DualPenTransportProfile) -> str | None:
         profile.min_confidence, profile.min_pen_separation_m, profile.min_tool_clearance_m,
         profile.pregrasp_offset_m, profile.approach_offset_m, profile.lift_distance_m,
         profile.retreat_offset_m, profile.phase_timeout_sec, profile.navigation_timeout_sec,
-        profile.max_barrier_skew_sec,
+        profile.turn_timeout_sec, profile.turn_settling_margin_sec,
+        profile.max_barrier_skew_sec, profile.translation_x_tolerance_m,
+        profile.translation_y_tolerance_m, profile.max_turn_angular_z_rad_s,
+        profile.turn_yaw_tolerance_rad,
     ):
         if not isfinite(float(value)) or float(value) < 0.0:
             return "simulation_site_profile_invalid"
@@ -216,6 +262,16 @@ def _profile_failure(profile: DualPenTransportProfile) -> str | None:
         return "simulation_site_profile_invalid"
     if not profile.pregrasp_offset_m > profile.approach_offset_m > 0.0:
         return "simulation_site_profile_invalid"
+    if profile.translation_x_tolerance_m <= 0.0 or profile.translation_y_tolerance_m <= 0.0:
+        return "simulation_site_profile_invalid"
+    if profile.max_turn_angular_z_rad_s <= 0.0 or profile.turn_yaw_tolerance_rad <= 0.0:
+        return "simulation_site_profile_invalid"
+    if profile.max_turn_angular_z_rad_s > 0.10:
+        return "max_turn_angular_z_rad_s_exceeds_0_10"
+    if profile.turn_yaw_tolerance_rad > 0.03490658503988659:
+        return "turn_yaw_tolerance_exceeds_two_degrees"
+    if profile.turn_zero_confirmation_count != 5:
+        return "turn_zero_confirmation_count_must_be_five"
     if profile.lift_vector_base_unit is None:
         return "lift_vector_base_unit_missing"
     try:
@@ -330,15 +386,21 @@ def _select_distinct_pair(payload: dict[str, Any], profile: DualPenTransportProf
     return {"left": left, "right": right}, None
 
 
-def _dual_step(phase: str, name: str, assignments: dict[str, Any], timeout: float, *, placement: bool = False) -> dict[str, Any]:
+def _dual_step(
+    phase: str, name: str, assignments: dict[str, Any], timeout: float,
+    profile: DualPenTransportProfile, *, placement: bool = False,
+) -> dict[str, Any]:
     result = {
         "phase": phase,
         "name": name,
         "kind": "synchronized_dual_arm_intent",
         "barrier": True,
         "deadline_sec": timeout,
-        "base_lock_required": True,
-        "base_command_permitted": False,
+        "translation_lock_required": True,
+        "translation_x_tolerance_m": profile.translation_x_tolerance_m,
+        "translation_y_tolerance_m": profile.translation_y_tolerance_m,
+        "base_translation_command_permitted": False,
+        "base_rotation_command_permitted": False,
         "commands_emitted": False,
     }
     if phase not in {"close", "confirm_grasp", "release", "confirm_release"}:
@@ -356,8 +418,10 @@ def build_dual_pen_transport_plan(
     perception_payload: dict[str, Any], *, now_stamp_ns: int,
     profile: DualPenTransportProfile = DualPenTransportProfile(),
     yellow_work_pose: NavigationPose | None = None,
+    table_2_orientation_pose: NavigationPose | None = None,
     table_2_drop_targets: dict[str, Any] | None = None,
     simulation_world: SimulationWorldBinding | None = None,
+    turn_safety_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the complete table-1 to table-2 simulation intent sequence."""
     if not isinstance(perception_payload, dict):
@@ -365,11 +429,22 @@ def build_dual_pen_transport_plan(
     profile_error = _profile_failure(profile)
     if profile_error:
         return _reject(profile_error)
-    if yellow_work_pose is None:
-        return _reject("yellow_work_pose_missing")
+    if yellow_work_pose is None or table_2_orientation_pose is None:
+        return _reject("yellow_and_table_2_orientation_poses_required")
     error = _validate_pose(yellow_work_pose, "yellow_work_pose")
     if error:
         return _reject(error)
+    error = _validate_pose(table_2_orientation_pose, "table_2_orientation_pose")
+    if error:
+        return _reject(error)
+    if abs(table_2_orientation_pose.x_m - yellow_work_pose.x_m) > profile.translation_x_tolerance_m:
+        return _reject("table_2_orientation_pose_x_must_remain_at_yellow")
+    if abs(table_2_orientation_pose.y_m - yellow_work_pose.y_m) > profile.translation_y_tolerance_m:
+        return _reject("table_2_orientation_pose_y_must_remain_at_yellow")
+    shortest_yaw_delta = _shortest_yaw_delta(yellow_work_pose.yaw_rad, table_2_orientation_pose.yaw_rad)
+    minimum_turn_timeout_sec = abs(shortest_yaw_delta) / profile.max_turn_angular_z_rad_s + profile.turn_settling_margin_sec
+    if profile.turn_timeout_sec + 1e-9 < minimum_turn_timeout_sec:
+        return _reject("turn_timeout_insufficient")
     transform = validate_sim_camera_to_base_transform(
         perception_payload.get("camera_to_base"), now_stamp_ns=now_stamp_ns,
         max_age_ns=profile.max_candidate_age_ns,
@@ -381,6 +456,12 @@ def build_dual_pen_transport_plan(
     )
     if not world["valid"]:
         return _reject(world["reason"], reasons=list(world.get("reasons") or [world["reason"]]))
+    turn_safety = _validate_turn_contract(
+        turn_safety_contract, world, now_stamp_ns=now_stamp_ns,
+        max_age_ns=profile.max_candidate_age_ns,
+    )
+    if not turn_safety["valid"]:
+        return _reject(turn_safety["reason"], reasons=list(turn_safety["reasons"]))
     assignments, selection_error = _select_distinct_pair(perception_payload, profile, now_stamp_ns)
     if selection_error or assignments is None:
         return _reject(selection_error or "candidate_selection_failed")
@@ -393,20 +474,43 @@ def build_dual_pen_transport_plan(
         assignments[side]["drop_id"] = drop["drop_id"]
         assignments[side]["drop_poses"] = drop["poses"]
     steps = [
-        {"phase": "navigate_pickup", "name": "navigate_red_start_to_yellow_work_pose", "kind": "navigation_gate", "goal": vars(yellow_work_pose), "deadline_sec": profile.navigation_timeout_sec, "base_lock_required": False, "base_command_permitted": True, "commands_emitted": False},
-        {"phase": "verify_pickup_targets", "name": "require_fresh_distinct_table_1_pens", "kind": "perception_gate", "target_ids": [assignments["left"]["target_id"], assignments["right"]["target_id"]], "base_lock_required": True, "base_command_permitted": False, "commands_emitted": False},
-        _dual_step("pregrasp", "both_arms_pregrasp", assignments, profile.phase_timeout_sec),
-        _dual_step("approach", "both_arms_approach", assignments, profile.phase_timeout_sec),
-        _dual_step("contact", "both_arms_contact_different_pens", assignments, profile.phase_timeout_sec),
-        _dual_step("close", "both_grippers_close", assignments, profile.phase_timeout_sec),
-        _dual_step("confirm_grasp", "require_both_grasp_feedback", assignments, profile.phase_timeout_sec),
-        _dual_step("lift", "both_arms_lift", assignments, profile.phase_timeout_sec),
-        {"phase": "verify_base_still_at_yellow", "name": "require_base_locked_at_yellow_before_table_2_place", "kind": "base_lock_gate", "expected_pose": vars(yellow_work_pose), "requires": ["both_grasps_confirmed"], "base_lock_required": True, "base_command_permitted": False, "commands_emitted": False},
-        _dual_step("place_pregrasp", "both_arms_table_2_pregrasp", assignments, profile.phase_timeout_sec, placement=True),
-        _dual_step("place_approach", "both_arms_table_2_approach", assignments, profile.phase_timeout_sec, placement=True),
-        _dual_step("release", "both_grippers_open", assignments, profile.phase_timeout_sec),
-        _dual_step("confirm_release", "require_both_release_feedback", assignments, profile.phase_timeout_sec),
-        _dual_step("retreat", "both_arms_retreat", assignments, profile.phase_timeout_sec, placement=True),
+        {"phase": "navigate_pickup", "name": "navigate_red_start_to_yellow_work_pose", "kind": "navigation_gate", "goal": vars(yellow_work_pose), "deadline_sec": profile.navigation_timeout_sec, "translation_lock_required": False, "base_translation_command_permitted": True, "base_rotation_command_permitted": True, "commands_emitted": False},
+        {"phase": "verify_pickup_targets", "name": "require_fresh_distinct_table_1_pens", "kind": "perception_gate", "target_ids": [assignments["left"]["target_id"], assignments["right"]["target_id"]], "translation_lock_required": True, "translation_x_tolerance_m": profile.translation_x_tolerance_m, "translation_y_tolerance_m": profile.translation_y_tolerance_m, "base_translation_command_permitted": False, "base_rotation_command_permitted": False, "commands_emitted": False},
+        _dual_step("pregrasp", "both_arms_pregrasp", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("approach", "both_arms_approach", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("contact", "both_arms_contact_different_pens", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("close", "both_grippers_close", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("confirm_grasp", "require_both_grasp_feedback", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("lift", "both_arms_lift_to_turn_safe_pose", assignments, profile.phase_timeout_sec, profile),
+        {
+            "phase": "rotate_in_place_to_table_2", "name": "controlled_yaw_only_turn_at_yellow",
+            "kind": "rotation_intent", "start_pose": vars(yellow_work_pose),
+            "target_orientation_pose_evidence": vars(table_2_orientation_pose),
+            "yaw_source": "scene_bound_explicit_pose_contract",
+            "rotation_center_xy_m": [yellow_work_pose.x_m, yellow_work_pose.y_m],
+            "target_yaw_rad": table_2_orientation_pose.yaw_rad,
+            "shortest_yaw_delta_rad": shortest_yaw_delta,
+            "requires": ["turn_safe_pose_confirmed", "both_grasps_confirmed", "collision_sweep_validated"],
+            "turn_safe_pose_confirmed": turn_safety["turn_safe_pose_confirmed"],
+            "collision_sweep_validated": turn_safety["collision_sweep_validated"],
+            "translation_lock_required": True,
+            "translation_x_tolerance_m": profile.translation_x_tolerance_m,
+            "translation_y_tolerance_m": profile.translation_y_tolerance_m,
+            "base_translation_command_permitted": False,
+            "base_rotation_command_permitted": True,
+            "required_linear_x_mps": 0.0, "required_linear_y_mps": 0.0,
+            "max_abs_angular_z_rad_s": profile.max_turn_angular_z_rad_s,
+            "yaw_tolerance_rad": profile.turn_yaw_tolerance_rad,
+            "zero_velocity_confirmations_required": profile.turn_zero_confirmation_count,
+            "minimum_turn_timeout_sec": minimum_turn_timeout_sec,
+            "settling_margin_sec": profile.turn_settling_margin_sec,
+            "deadline_sec": profile.turn_timeout_sec, "commands_emitted": False,
+        },
+        _dual_step("place_pregrasp", "both_arms_table_2_pregrasp", assignments, profile.phase_timeout_sec, profile, placement=True),
+        _dual_step("place_approach", "both_arms_table_2_approach", assignments, profile.phase_timeout_sec, profile, placement=True),
+        _dual_step("release", "both_grippers_open", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("confirm_release", "require_both_release_feedback", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("retreat", "both_arms_retreat", assignments, profile.phase_timeout_sec, profile, placement=True),
     ]
     return {
         "schema": PLAN_SCHEMA,
@@ -417,11 +521,15 @@ def build_dual_pen_transport_plan(
         "physical_execution_eligible": False,
         "simulation_execution_eligible": True,
         "simulation_execution_allowed": True,
-        "base_lock_required": True,
-        "base_command_permitted_after_yellow": False,
+        "translation_lock_required_after_yellow": True,
+        "translation_x_tolerance_m": profile.translation_x_tolerance_m,
+        "translation_y_tolerance_m": profile.translation_y_tolerance_m,
+        "translation_commands_permitted_after_yellow": False,
+        "rotation_permitted_only_in_phase": "rotate_in_place_to_table_2",
         "physical_execution_block_reason": "simulation_camera_to_base_transform_cannot_be_used_on_physical_robot",
         "transform": transform,
         "simulation_world": world,
+        "turn_safety": turn_safety,
         "assignments": assignments,
         "steps": steps,
         "required_motion_adapter_contract": required_motion_adapter_contract(),

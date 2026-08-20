@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import isfinite
 from typing import Any
 
 from .dual_pen_transport_contract import (
@@ -32,7 +33,18 @@ class AdapterResult:
     grasp_confirmed: bool = False
     released_confirmed: bool = False
     collision_free: bool = True
-    base_stationary: bool = True
+    translation_dx_m: float = 0.0
+    translation_dy_m: float = 0.0
+    linear_x_mps: float = 0.0
+    linear_y_mps: float = 0.0
+    angular_z_rad_s: float = 0.0
+    yaw_error_rad: float = 0.0
+    zero_velocity_confirmations: int = 0
+    tf_available: bool = True
+    odom_available: bool = True
+    turn_safe_pose_confirmed: bool = False
+    both_grasps_confirmed: bool = False
+    collision_sweep_validated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return vars(self).copy()
@@ -47,6 +59,9 @@ class FakeDualPenTransportAdapter:
     calls: list[dict[str, Any]] = field(default_factory=list)
 
     def _spec(self, side: str | None, phase: str) -> dict[str, Any]:
+        defaults: dict[str, Any] = {"result": "succeeded", "grasp_confirmed": phase == "confirm_grasp", "released_confirmed": phase == "confirm_release"}
+        if phase == "rotate_in_place_to_table_2":
+            defaults.update({"angular_z_rad_s": 0.08, "yaw_error_rad": 0.01, "zero_velocity_confirmations": 5, "turn_safe_pose_confirmed": True, "both_grasps_confirmed": True, "collision_sweep_validated": True})
         keys = ([f"{side}:{phase}", (side, phase)] if side else []) + [phase]
         value: Any = None
         found = False
@@ -55,12 +70,12 @@ class FakeDualPenTransportAdapter:
                 value, found = self.outcomes[key], True
                 break
         if not found:
-            return {"result": "succeeded", "grasp_confirmed": phase == "confirm_grasp", "released_confirmed": phase == "confirm_release"}
-        if isinstance(value, dict) and side and side in value and not {"result", "accepted", "feedback", "delay_sec", "collision_free"}.intersection(value):
+            return defaults
+        if isinstance(value, dict) and side and side in value and not {"result", "accepted", "feedback", "delay_sec", "collision_free", "translation_dx_m", "translation_dy_m"}.intersection(value):
             value = value[side]
         if isinstance(value, str):
-            return {"result": value}
-        return dict(value) if isinstance(value, dict) else {"result": "failed"}
+            return {**defaults, "result": value}
+        return {**defaults, **dict(value)} if isinstance(value, dict) else {**defaults, "result": "failed"}
 
     def execute(self, phase: str, *, side: str | None, intent: dict[str, Any], deadline_sec: float) -> AdapterResult:
         spec = self._spec(side, phase)
@@ -77,7 +92,18 @@ class FakeDualPenTransportAdapter:
             bool(spec.get("grasp_confirmed", phase == "close" and result == "succeeded")),
             bool(spec.get("released_confirmed", phase == "confirm_release" and result == "succeeded")),
             bool(spec.get("collision_free", True)),
-            not bool(spec.get("base_moved", False)),
+            float(spec.get("translation_dx_m", 0.0)),
+            float(spec.get("translation_dy_m", 0.0)),
+            float(spec.get("linear_x_mps", 0.0)),
+            float(spec.get("linear_y_mps", 0.0)),
+            float(spec.get("angular_z_rad_s", 0.0)),
+            float(spec.get("yaw_error_rad", 0.0)),
+            int(spec.get("zero_velocity_confirmations", 0)),
+            bool(spec.get("tf_available", True)),
+            bool(spec.get("odom_available", True)),
+            bool(spec.get("turn_safe_pose_confirmed", False)),
+            bool(spec.get("both_grasps_confirmed", False)),
+            bool(spec.get("collision_sweep_validated", False)),
         )
         self.calls.append({"phase": phase, "side": side, "intent": intent, "deadline_sec": deadline_sec, "result": output.as_dict(), "commands_emitted": False})
         return output
@@ -107,8 +133,10 @@ def run_dual_pen_transport_simulation(
     perception_payload: dict[str, Any], *, now_stamp_ns: int,
     profile: DualPenTransportProfile,
     yellow_work_pose: NavigationPose,
+    table_2_orientation_pose: NavigationPose,
     table_2_drop_targets: dict[str, Any],
     simulation_world: SimulationWorldBinding,
+    turn_safety_contract: dict[str, Any],
     adapter: FakeDualPenTransportAdapter | None = None,
     cancel_at_phase: str | None = None,
 ) -> dict[str, Any]:
@@ -116,8 +144,9 @@ def run_dual_pen_transport_simulation(
     adapter = adapter or FakeDualPenTransportAdapter()
     plan = build_dual_pen_transport_plan(
         perception_payload, now_stamp_ns=now_stamp_ns, profile=profile,
-        yellow_work_pose=yellow_work_pose,
+        yellow_work_pose=yellow_work_pose, table_2_orientation_pose=table_2_orientation_pose,
         table_2_drop_targets=table_2_drop_targets, simulation_world=simulation_world,
+        turn_safety_contract=turn_safety_contract,
     )
     trace: dict[str, Any] = {"schema": TRACE_SCHEMA, "mode": "offline_isaac_simulation", "commands_emitted": False, "plan": plan, "events": [], "terminal_state": "rejected"}
     if plan["state"] != "simulation_plan_ready":
@@ -132,15 +161,42 @@ def run_dual_pen_transport_simulation(
             return trace
         timeout = float(step.get("deadline_sec", profile.phase_timeout_sec))
         deadline = adapter.clock.now_sec + timeout
-        if step["kind"] in {"perception_gate", "base_lock_gate"}:
+        if step["kind"] in {"perception_gate", "rotation_intent"}:
             results = [adapter.execute(phase, side=None, intent=step, deadline_sec=deadline)]
         elif step["kind"] == "navigation_gate":
             results = [adapter.execute(phase, side=None, intent=step, deadline_sec=deadline)]
         else:
             results = [adapter.execute(phase, side=side, intent=step.get(side, {}), deadline_sec=deadline) for side in SIDES]
         failure, skew = _failure(results, phase, profile.max_barrier_skew_sec)
-        if step.get("base_lock_required") is True and any(not result.base_stationary for result in results):
-            failure = "base_moved_while_base_lock_required"
+        if step.get("translation_lock_required") is True:
+            if any(not all(isfinite(value) for value in (result.translation_dx_m, result.translation_dy_m)) for result in results):
+                failure = "translation_lock_feedback_nonfinite"
+            elif any(not result.tf_available for result in results):
+                failure = "translation_lock_tf_missing"
+            elif any(not result.odom_available for result in results):
+                failure = "translation_lock_odom_missing"
+            elif any(abs(result.translation_dx_m) > float(step["translation_x_tolerance_m"]) for result in results):
+                failure = "translation_lock_x_drift_exceeded"
+            elif any(abs(result.translation_dy_m) > float(step["translation_y_tolerance_m"]) for result in results):
+                failure = "translation_lock_y_drift_exceeded"
+        if phase == "rotate_in_place_to_table_2" and failure is None:
+            turn = results[0]
+            if not all(isfinite(value) for value in (turn.linear_x_mps, turn.linear_y_mps, turn.angular_z_rad_s, turn.yaw_error_rad)):
+                failure = "rotate_in_place_feedback_nonfinite"
+            elif not turn.turn_safe_pose_confirmed:
+                failure = "turn_safe_pose_not_confirmed"
+            elif not holding or not turn.both_grasps_confirmed:
+                failure = "both_grasps_not_confirmed_for_turn"
+            elif not turn.collision_sweep_validated:
+                failure = "collision_sweep_not_validated_for_turn"
+            elif abs(turn.linear_x_mps) > 1e-9 or abs(turn.linear_y_mps) > 1e-9:
+                failure = "rotate_in_place_linear_velocity_nonzero"
+            elif abs(turn.angular_z_rad_s) > float(step["max_abs_angular_z_rad_s"]):
+                failure = "rotate_in_place_angular_speed_exceeded"
+            elif abs(turn.yaw_error_rad) > float(step["yaw_tolerance_rad"]):
+                failure = "rotate_in_place_yaw_tolerance_not_met"
+            elif turn.zero_velocity_confirmations < int(step["zero_velocity_confirmations_required"]):
+                failure = "rotate_in_place_zero_confirmations_insufficient"
         if phase == "confirm_grasp" and not all(result.grasp_confirmed for result in results):
             failure = "grasp_confirmation_missing"
         if phase == "confirm_release" and not all(result.released_confirmed for result in results):
@@ -149,7 +205,13 @@ def run_dual_pen_transport_simulation(
         trace["events"].append(event)
         if failure:
             adapter.cancel_all(failure)
-            safety_critical = holding or phase in {"lift", "verify_base_still_at_yellow", "place_pregrasp", "place_approach", "release", "confirm_release"}
+            motion_integrity_failure = failure.startswith("translation_lock_") or failure in {
+                "rotate_in_place_linear_velocity_nonzero", "rotate_in_place_angular_speed_exceeded",
+                "rotate_in_place_yaw_tolerance_not_met", "rotate_in_place_zero_confirmations_insufficient",
+                "turn_safe_pose_not_confirmed", "both_grasps_not_confirmed_for_turn",
+                "collision_sweep_not_validated_for_turn",
+            }
+            safety_critical = holding or motion_integrity_failure or phase in {"lift", "rotate_in_place_to_table_2", "place_pregrasp", "place_approach", "release", "confirm_release"}
             if safety_critical:
                 adapter.stop_unverified(failure)
             trace.update({"terminal_state": "locked_manual_intervention" if safety_critical else "failed", "state": "failed", "failure_code": failure, "failed_phase": phase})
