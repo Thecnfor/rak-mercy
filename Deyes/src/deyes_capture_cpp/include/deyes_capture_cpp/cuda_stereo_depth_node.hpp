@@ -32,6 +32,11 @@ struct StereoCalibration
   cv::Mat t;
   double baseline_m{0.0};
   double fx{0.0};
+  std::string calibration_id;
+  std::string robot_id;
+  std::string camera_pair_id;
+  std::string source;
+  bool validated{false};
 };
 
 struct FrameBundle
@@ -90,18 +95,17 @@ private:
   PairSelection select_best_pair(
     const std::deque<FrameBundle> & left_frames,
     const std::deque<FrameBundle> & right_frames,
-    bool have_left_info,
-    bool have_right_info,
     int64_t now_ns) const;
   void mark_pair_processed(uint64_t left_seq, uint64_t right_seq, int64_t now_ns);
   void publish_state(DepthStreamState state, const std::string & detail);
   void maybe_log_stats(int64_t now_ns);
   static const char * state_to_string(DepthStreamState state);
   void ensure_rectify_maps(int width, int height);
+  sensor_msgs::msg::CameraInfo make_rectified_left_camera_info(
+    const rclcpp::Time & stamp,
+    const std::string & frame_id) const;
   void on_left_image(const sensor_msgs::msg::Image::SharedPtr msg);
   void on_right_image(const sensor_msgs::msg::Image::SharedPtr msg);
-  void on_left_info(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
-  void on_right_info(const sensor_msgs::msg::CameraInfo::SharedPtr msg);
   void on_timer();
   cv::Mat valid_mask_from_depth(const cv::Mat & depth) const;
   cv::Mat disparity_to_float32(const cv::Mat & disparity) const;
@@ -119,16 +123,13 @@ private:
   StereoCalibration calibration_;
   std::deque<FrameBundle> left_frames_;
   std::deque<FrameBundle> right_frames_;
-  std::optional<sensor_msgs::msg::CameraInfo> left_info_;
-  std::optional<sensor_msgs::msg::CameraInfo> right_info_;
 
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr left_image_sub_;
   rclcpp::Subscription<sensor_msgs::msg::Image>::SharedPtr right_image_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr left_info_sub_;
-  rclcpp::Subscription<sensor_msgs::msg::CameraInfo>::SharedPtr right_info_sub_;
 
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr disparity_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr depth_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr left_rect_info_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr left_rect_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr right_rect_pub_;
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr valid_mask_pub_;
@@ -145,8 +146,9 @@ private:
   cv::cuda::GpuMat right_map1_gpu_;
   cv::cuda::GpuMat right_map2_gpu_;
   cv::Size rectify_size_;
+  cv::Mat rectified_p1_;
 
-  int64_t max_sync_diff_ns_{3'000'000};
+  int64_t max_sync_diff_ns_{10'000'000};
   int64_t frame_stale_ns_{200'000'000};
   int64_t publish_period_ns_{33'333'333};
   double min_depth_m_{0.2};
@@ -177,6 +179,7 @@ private:
   uint64_t pair_out_of_window_count_{0};
   uint64_t stale_frame_count_{0};
   uint64_t processing_overrun_count_{0};
+  uint64_t calibration_mismatch_count_{0};
   uint64_t last_logged_published_pairs_{0};
   uint64_t last_logged_missing_input_count_{0};
   uint64_t last_logged_pair_out_of_window_count_{0};

@@ -159,9 +159,7 @@ CudaStereoDepthNode::CudaStereoDepthNode(const rclcpp::NodeOptions & options)
   declare_parameter<std::string>("calib_path", "");
   declare_parameter<std::string>("left_image_topic", "/x1/left_camera/image_raw");
   declare_parameter<std::string>("right_image_topic", "/x1/right_camera/image_raw");
-  declare_parameter<std::string>("left_camera_info_topic", "/x1/left_camera/camera_info");
-  declare_parameter<std::string>("right_camera_info_topic", "/x1/right_camera/camera_info");
-  declare_parameter<double>("max_sync_diff_ms", 3.0);
+  declare_parameter<double>("max_sync_diff_ms", 10.0);
   declare_parameter<double>("publish_period_sec", 1.0 / 30.0);
   declare_parameter<double>("frame_stale_sec", 0.2);
   declare_parameter<double>("min_depth_m", 0.20);
@@ -186,6 +184,7 @@ CudaStereoDepthNode::CudaStereoDepthNode(const rclcpp::NodeOptions & options)
   declare_parameter<bool>("publish_debug_mask", true);
   declare_parameter<std::string>("disparity_topic", "/x1/stereo/disparity");
   declare_parameter<std::string>("depth_topic", "/x1/stereo/depth");
+  declare_parameter<std::string>("left_rect_camera_info_topic", "/x1/stereo/left/camera_info_rect");
   declare_parameter<std::string>("debug_left_rect_topic", "/x1/stereo/debug/left_rect");
   declare_parameter<std::string>("debug_right_rect_topic", "/x1/stereo/debug/right_rect");
   declare_parameter<std::string>("debug_valid_mask_topic", "/x1/stereo/debug/valid_mask");
@@ -272,6 +271,8 @@ CudaStereoDepthNode::CudaStereoDepthNode(const rclcpp::NodeOptions & options)
     get_parameter("disparity_topic").as_string(), qos);
   depth_pub_ = create_publisher<sensor_msgs::msg::Image>(
     get_parameter("depth_topic").as_string(), qos);
+  left_rect_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
+    get_parameter("left_rect_camera_info_topic").as_string(), qos);
   if (publish_debug_rect_) {
     left_rect_pub_ = create_publisher<sensor_msgs::msg::Image>(
       get_parameter("debug_left_rect_topic").as_string(), qos);
@@ -295,27 +296,20 @@ CudaStereoDepthNode::CudaStereoDepthNode(const rclcpp::NodeOptions & options)
     get_parameter("right_image_topic").as_string(),
     qos,
     std::bind(&CudaStereoDepthNode::on_right_image, this, std::placeholders::_1));
-  left_info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
-    get_parameter("left_camera_info_topic").as_string(),
-    qos,
-    std::bind(&CudaStereoDepthNode::on_left_info, this, std::placeholders::_1));
-  right_info_sub_ = create_subscription<sensor_msgs::msg::CameraInfo>(
-    get_parameter("right_camera_info_topic").as_string(),
-    qos,
-    std::bind(&CudaStereoDepthNode::on_right_info, this, std::placeholders::_1));
-
   timer_ = create_wall_timer(
     std::chrono::duration<double>(get_parameter("publish_period_sec").as_double()),
     std::bind(&CudaStereoDepthNode::on_timer, this));
 
   RCLCPP_INFO(
     get_logger(),
-    "cuda_stereo_depth_node started: disparity=%s depth=%s calib=%s queue=%zu "
+    "cuda_stereo_depth_node started: disparity=%s depth=%s rectified_info=%s calib=%s validated=%s queue=%zu "
     "max_sync_diff_ms=%.2f frame_stale_sec=%.3f wls=%s texture_threshold=%d "
     "uniqueness_ratio=%d speckle_window_size=%d speckle_range=%d disp12_max_diff=%d",
     get_parameter("disparity_topic").as_string().c_str(),
     get_parameter("depth_topic").as_string().c_str(),
+    get_parameter("left_rect_camera_info_topic").as_string().c_str(),
     calib_path.c_str(),
+    calibration_.validated ? "true" : "false",
     frame_queue_size_,
     static_cast<double>(max_sync_diff_ns_) / 1e6,
     static_cast<double>(frame_stale_ns_) / 1e9,
@@ -330,6 +324,21 @@ CudaStereoDepthNode::CudaStereoDepthNode(const rclcpp::NodeOptions & options)
 StereoCalibration CudaStereoDepthNode::load_stereo_calibration(const std::string & calib_path) const
 {
   const YAML::Node root = YAML::LoadFile(calib_path);
+  const std::array<const char *, 10> metadata_keys = {
+    "calibration_id", "robot_id", "camera_pair_id", "img_size", "board_inner_corners",
+    "square_size_m", "reproj_rms_px", "epipolar_p95_px", "date", "source"};
+  for (const auto * key : metadata_keys) {
+    if (!root[key]) {
+      throw std::runtime_error("stereo calibration missing required metadata key: " + std::string(key));
+    }
+  }
+  if (!root["validated"]) {
+    throw std::runtime_error("stereo calibration missing required metadata key: validated");
+  }
+  const auto board_inner_corners = parse_flat_array<2>(root["board_inner_corners"]);
+  if (board_inner_corners[0] != 9.0 || board_inner_corners[1] != 6.0) {
+    throw std::runtime_error("only the physical 9x6 checkerboard calibration contract is accepted");
+  }
   const auto img_size = parse_flat_array<2>(root["img_size"]);
   const auto d1_values = parse_vector(root["D1"]);
   const auto d2_values = parse_vector(root["D2"]);
@@ -346,6 +355,19 @@ StereoCalibration CudaStereoDepthNode::load_stereo_calibration(const std::string
   calibration.baseline_m = root["baseline_m"] ? std::abs(root["baseline_m"].as<double>()) :
     std::abs(calibration.t.at<double>(0, 0));
   calibration.fx = root["fx"] ? root["fx"].as<double>() : calibration.k1.at<double>(0, 0);
+  calibration.calibration_id = root["calibration_id"].as<std::string>();
+  calibration.robot_id = root["robot_id"].as<std::string>();
+  calibration.camera_pair_id = root["camera_pair_id"].as<std::string>();
+  calibration.source = root["source"].as<std::string>();
+  calibration.validated = root["validated"].as<bool>();
+  if (calibration.validated) {
+    if (calibration.source != "physical_checkerboard") {
+      throw std::runtime_error("validated stereo calibration must use source=physical_checkerboard");
+    }
+    if (root["square_size_m"].IsNull() || root["reproj_rms_px"].IsNull() || root["epipolar_p95_px"].IsNull()) {
+      throw std::runtime_error("validated stereo calibration requires measured board and error metadata");
+    }
+  }
   return calibration;
 }
 
@@ -431,24 +453,16 @@ void CudaStereoDepthNode::prune_queues_locked(int64_t now_ns)
 CudaStereoDepthNode::PairSelection CudaStereoDepthNode::select_best_pair(
   const std::deque<FrameBundle> & left_frames,
   const std::deque<FrameBundle> & right_frames,
-  bool have_left_info,
-  bool have_right_info,
   int64_t now_ns) const
 {
   PairSelection result;
-  if (left_frames.empty() || right_frames.empty() || !have_left_info || !have_right_info) {
+  if (left_frames.empty() || right_frames.empty()) {
     std::vector<std::string> missing_parts;
     if (left_frames.empty()) {
       missing_parts.emplace_back("left_image");
     }
     if (right_frames.empty()) {
       missing_parts.emplace_back("right_image");
-    }
-    if (!have_left_info) {
-      missing_parts.emplace_back("left_camera_info");
-    }
-    if (!have_right_info) {
-      missing_parts.emplace_back("right_camera_info");
     }
     std::ostringstream stream;
     for (std::size_t index = 0; index < missing_parts.size(); ++index) {
@@ -655,15 +669,29 @@ void CudaStereoDepthNode::ensure_rectify_maps(int width, int height)
     return;
   }
 
+  // Debug calibration may be rendered at another resolution.  Scale the input
+  // intrinsics before stereoRectify; never resize maps made from 1280x720 K.
+  const double scale_x = static_cast<double>(width) / static_cast<double>(calibration_.image_size.width);
+  const double scale_y = static_cast<double>(height) / static_cast<double>(calibration_.image_size.height);
+  cv::Mat k1 = calibration_.k1.clone();
+  cv::Mat k2 = calibration_.k2.clone();
+  for (cv::Mat * k : {&k1, &k2}) {
+    k->at<double>(0, 0) *= scale_x;
+    k->at<double>(0, 1) *= scale_x;
+    k->at<double>(0, 2) *= scale_x;
+    k->at<double>(1, 1) *= scale_y;
+    k->at<double>(1, 2) *= scale_y;
+  }
+
   cv::Mat r1;
   cv::Mat r2;
   cv::Mat p1;
   cv::Mat p2;
   cv::Mat q;
   cv::stereoRectify(
-    calibration_.k1,
+    k1,
     calibration_.d1,
-    calibration_.k2,
+    k2,
     calibration_.d2,
     cv::Size(width, height),
     calibration_.r,
@@ -678,16 +706,17 @@ void CudaStereoDepthNode::ensure_rectify_maps(int width, int height)
 
   calibration_.fx = p1.at<double>(0, 0);
   calibration_.baseline_m = std::abs(calibration_.t.at<double>(0, 0));
+  rectified_p1_ = p1.clone();
 
   cv::Mat left_map1_cpu;
   cv::Mat left_map2_cpu;
   cv::Mat right_map1_cpu;
   cv::Mat right_map2_cpu;
   cv::initUndistortRectifyMap(
-    calibration_.k1, calibration_.d1, r1, p1, cv::Size(width, height), CV_32FC1,
+    k1, calibration_.d1, r1, p1, cv::Size(width, height), CV_32FC1,
     left_map1_cpu, left_map2_cpu);
   cv::initUndistortRectifyMap(
-    calibration_.k2, calibration_.d2, r2, p2, cv::Size(width, height), CV_32FC1,
+    k2, calibration_.d2, r2, p2, cv::Size(width, height), CV_32FC1,
     right_map1_cpu, right_map2_cpu);
 
   left_map1_gpu_.upload(left_map1_cpu);
@@ -695,6 +724,33 @@ void CudaStereoDepthNode::ensure_rectify_maps(int width, int height)
   right_map1_gpu_.upload(right_map1_cpu);
   right_map2_gpu_.upload(right_map2_cpu);
   rectify_size_ = cv::Size(width, height);
+}
+
+sensor_msgs::msg::CameraInfo CudaStereoDepthNode::make_rectified_left_camera_info(
+  const rclcpp::Time & stamp,
+  const std::string & frame_id) const
+{
+  if (rectified_p1_.empty() || rectify_size_.width <= 0 || rectify_size_.height <= 0) {
+    throw std::runtime_error("rectified CameraInfo requested before rectify maps are initialized");
+  }
+  sensor_msgs::msg::CameraInfo info;
+  info.header.stamp.sec = static_cast<int32_t>(stamp.seconds());
+  info.header.stamp.nanosec = static_cast<uint32_t>(stamp.nanoseconds() % 1000000000LL);
+  info.header.frame_id = frame_id;
+  info.width = static_cast<uint32_t>(rectify_size_.width);
+  info.height = static_cast<uint32_t>(rectify_size_.height);
+  info.distortion_model = "plumb_bob";
+  info.d.assign(5U, 0.0);
+  info.k = {
+    rectified_p1_.at<double>(0, 0), rectified_p1_.at<double>(0, 1), rectified_p1_.at<double>(0, 2),
+    rectified_p1_.at<double>(1, 0), rectified_p1_.at<double>(1, 1), rectified_p1_.at<double>(1, 2),
+    rectified_p1_.at<double>(2, 0), rectified_p1_.at<double>(2, 1), rectified_p1_.at<double>(2, 2)};
+  info.r = {1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0};
+  info.p = {
+    rectified_p1_.at<double>(0, 0), rectified_p1_.at<double>(0, 1), rectified_p1_.at<double>(0, 2), rectified_p1_.at<double>(0, 3),
+    rectified_p1_.at<double>(1, 0), rectified_p1_.at<double>(1, 1), rectified_p1_.at<double>(1, 2), rectified_p1_.at<double>(1, 3),
+    rectified_p1_.at<double>(2, 0), rectified_p1_.at<double>(2, 1), rectified_p1_.at<double>(2, 2), rectified_p1_.at<double>(2, 3)};
+  return info;
 }
 
 void CudaStereoDepthNode::on_left_image(const sensor_msgs::msg::Image::SharedPtr msg)
@@ -727,18 +783,6 @@ void CudaStereoDepthNode::on_right_image(const sensor_msgs::msg::Image::SharedPt
   bundle.seq = next_right_seq_++;
   enqueue_frame(right_frames_, std::move(bundle));
   prune_queues_locked(now().nanoseconds());
-}
-
-void CudaStereoDepthNode::on_left_info(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  left_info_ = *msg;
-}
-
-void CudaStereoDepthNode::on_right_info(const sensor_msgs::msg::CameraInfo::SharedPtr msg)
-{
-  std::lock_guard<std::mutex> lock(mutex_);
-  right_info_ = *msg;
 }
 
 cv::Mat CudaStereoDepthNode::valid_mask_from_depth(const cv::Mat & depth) const
@@ -907,19 +951,15 @@ void CudaStereoDepthNode::on_timer()
   const int64_t timer_start_ns = now().nanoseconds();
   std::deque<FrameBundle> left_frames;
   std::deque<FrameBundle> right_frames;
-  bool have_left_info = false;
-  bool have_right_info = false;
   {
     std::lock_guard<std::mutex> lock(mutex_);
     prune_queues_locked(timer_start_ns);
     left_frames = left_frames_;
     right_frames = right_frames_;
-    have_left_info = left_info_.has_value();
-    have_right_info = right_info_.has_value();
   }
 
   PairSelection selection = select_best_pair(
-    left_frames, right_frames, have_left_info, have_right_info, timer_start_ns);
+    left_frames, right_frames, timer_start_ns);
   if (!selection.left.has_value() || !selection.right.has_value()) {
     switch (selection.state) {
       case DepthStreamState::kMissingInput:
@@ -952,6 +992,21 @@ void CudaStereoDepthNode::on_timer()
       DepthStreamState::kMissingInput,
       "image_size_mismatch left=" + std::to_string(left.width) + "x" + std::to_string(left.height) +
       " right=" + std::to_string(right.width) + "x" + std::to_string(right.height));
+    mark_pair_processed(left.seq, right.seq, timer_start_ns);
+    maybe_log_stats(timer_start_ns);
+    return;
+  }
+
+  if (calibration_.validated &&
+    (left.width != calibration_.image_size.width || left.height != calibration_.image_size.height))
+  {
+    ++calibration_mismatch_count_;
+    publish_state(
+      DepthStreamState::kMissingInput,
+      "validated_calibration_resolution_mismatch calibration=" +
+      std::to_string(calibration_.image_size.width) + "x" +
+      std::to_string(calibration_.image_size.height) + " runtime=" +
+      std::to_string(left.width) + "x" + std::to_string(left.height));
     mark_pair_processed(left.seq, right.seq, timer_start_ns);
     maybe_log_stats(timer_start_ns);
     return;
@@ -1029,6 +1084,7 @@ void CudaStereoDepthNode::on_timer()
   const rclcpp::Time stamp = left.stamp > right.stamp ? left.stamp : right.stamp;
   disparity_pub_->publish(make_image_msg(disparity, stamp, left.frame_id, "32FC1"));
   depth_pub_->publish(make_image_msg(depth, stamp, left.frame_id, "32FC1"));
+  left_rect_info_pub_->publish(make_rectified_left_camera_info(stamp, left.frame_id));
 
   if (publish_debug_rect_) {
     cv::Mat right_rect;
@@ -1064,7 +1120,9 @@ void CudaStereoDepthNode::on_timer()
     stream.precision(2);
     stream << "processing_ms=" << processing_ms
            << " budget_ms=" << ((static_cast<double>(publish_period_ns_) * processing_overrun_factor_) / 1e6)
-           << " pair_diff_ms=" << last_pair_diff_ms_;
+           << " pair_diff_ms=" << last_pair_diff_ms_
+           << " calibration_id=" << calibration_.calibration_id
+           << " validated=" << (calibration_.validated ? "true" : "false");
     publish_state(DepthStreamState::kProcessingOverrun, stream.str());
   } else {
     std::ostringstream stream;
@@ -1073,7 +1131,9 @@ void CudaStereoDepthNode::on_timer()
     stream << "processing_ms=" << processing_ms
            << " pair_diff_ms=" << last_pair_diff_ms_
            << " left_seq=" << left.seq
-           << " right_seq=" << right.seq;
+           << " right_seq=" << right.seq
+           << " calibration_id=" << calibration_.calibration_id
+           << " validated=" << (calibration_.validated ? "true" : "false");
     publish_state(DepthStreamState::kOk, stream.str());
   }
   maybe_log_stats(now().nanoseconds());

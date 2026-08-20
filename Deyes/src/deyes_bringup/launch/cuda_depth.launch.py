@@ -21,10 +21,12 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument("left_image_topic", default_value="/x1/left_camera/image_raw"),
         DeclareLaunchArgument("right_image_topic", default_value="/x1/right_camera/image_raw"),
-        DeclareLaunchArgument("left_info_topic", default_value="/x1/left_camera/camera_info"),
-        DeclareLaunchArgument("right_info_topic", default_value="/x1/right_camera/camera_info"),
         DeclareLaunchArgument("stereo_disparity_topic", default_value="/x1/stereo/disparity"),
         DeclareLaunchArgument("stereo_depth_topic", default_value="/x1/stereo/depth"),
+        DeclareLaunchArgument(
+            "stereo_left_rect_camera_info_topic",
+            default_value="/x1/stereo/left/camera_info_rect",
+        ),
         DeclareLaunchArgument("cuda_depth_max_sync_diff_ms", default_value="10.0"),
         DeclareLaunchArgument("cuda_depth_publish_period_sec", default_value="0.07"),
         DeclareLaunchArgument("cuda_depth_min_depth_m", default_value="0.20"),
@@ -52,10 +54,11 @@ def generate_launch_description() -> LaunchDescription:
                 "calib_path": LaunchConfiguration("calib_path"),
                 "left_image_topic": LaunchConfiguration("left_image_topic"),
                 "right_image_topic": LaunchConfiguration("right_image_topic"),
-                "left_camera_info_topic": LaunchConfiguration("left_info_topic"),
-                "right_camera_info_topic": LaunchConfiguration("right_info_topic"),
                 "disparity_topic": LaunchConfiguration("stereo_disparity_topic"),
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
+                "left_rect_camera_info_topic": LaunchConfiguration(
+                    "stereo_left_rect_camera_info_topic"
+                ),
                 "max_sync_diff_ms": LaunchConfiguration("cuda_depth_max_sync_diff_ms"),
                 "publish_period_sec": LaunchConfiguration("cuda_depth_publish_period_sec"),
                 "min_depth_m": LaunchConfiguration("cuda_depth_min_depth_m"),

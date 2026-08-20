@@ -45,6 +45,17 @@ elephant_imx219stereo_1280x720_20260818.yaml
 
 当前 `/home/elephant/mercury_grasp/config/stereo_calib.yaml` 仅作为链路联调占位参数，不应直接复制进本目录冒充物理标定结果。
 
+## 校准契约（深度真源）
+
+所有供 `cuda_stereo_depth_node` 使用的 YAML 必须含有 `calibration_id`、`robot_id`、
+`camera_pair_id`、`img_size`、`board_inner_corners: [9, 6]`、`square_size_m`、
+`reproj_rms_px`、`epipolar_p95_px`、`date`、`source` 与 `validated`。物理标定前上述测量
+字段必须保留为 `null`，且 `validated: false`；不得填入推导或猜测的误差数值。只有
+`source: physical_checkerboard` 的实测 YAML 才可以设置 `validated: true`。
+
+`validated: true` 时运行分辨率必须严格等于 `img_size`。未验证 YAML 仅可用于 debug，节点会
+按 `scale_x/scale_y` 缩放原始 K 后重新计算校正映射，不能作为抓取距离真源。
+
 > 已从现场 `192.168.137.17` 备份该占位参数到本目录 `stereo_calib.yaml`，用于现场恢复与链路联调。
 > 注意：它是 `spec-based` 理论值（`fx=fy=864.91`、`baseline=0.06m`、`R=单位阵`、`D=0`），
 > **不是物理标定结果**，不能作为可信测距/抓取的标定依据。

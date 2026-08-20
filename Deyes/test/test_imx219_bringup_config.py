@@ -60,6 +60,7 @@ def test_cuda_depth_defaults_prioritize_stable_output() -> None:
     assert "median_ksize: 3" in content
     assert "publish_debug_rect: false" in content
     assert "publish_debug_mask: false" in content
+    assert 'left_rect_camera_info_topic: "/x1/stereo/left/camera_info_rect"' in content
 
 
 def test_cuda_depth_launch_defaults_are_consistent() -> None:
@@ -193,6 +194,15 @@ def test_cuda_depth_node_enables_wls_and_quality_metrics() -> None:
     assert "ximgproc" in cmake_content
 
 
+def test_depth_geometry_uses_cuda_rectified_camera_info() -> None:
+    content = CUDA_DEPTH_NODE_PATH.read_text(encoding="utf-8")
+    integrated = LAUNCH_PATH.read_text(encoding="utf-8")
+
+    assert '"/x1/stereo/left/camera_info_rect"' in content
+    assert '"stereo_left_rect_camera_info_topic"' in integrated
+    assert '"camera_info_topic": LaunchConfiguration("stereo_left_rect_camera_info_topic")' in integrated
+
+
 def test_ground_plane_launch_and_defaults_exist() -> None:
     launch_content = LAUNCH_PATH.read_text(encoding="utf-8")
     config_content = GROUND_PLANE_CONFIG_PATH.read_text(encoding="utf-8")
@@ -214,4 +224,3 @@ def test_ground_plane_launch_and_defaults_exist() -> None:
     assert "def build_ground_frame(" in node_content
     assert "TransformBroadcaster" in node_content
     assert "sendTransform" in node_content
-

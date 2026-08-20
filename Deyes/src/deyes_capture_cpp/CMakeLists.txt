@@ -22,6 +22,7 @@ find_package(OpenCV REQUIRED COMPONENTS
 )
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
+find_package(diagnostic_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(PkgConfig REQUIRED)
 find_package(yaml-cpp REQUIRED)
@@ -79,6 +80,7 @@ target_compile_options(cuda_stereo_depth_node PRIVATE
 ament_target_dependencies(imx219_stereo_capture_node
   rclcpp
   sensor_msgs
+  diagnostic_msgs
   std_msgs
 )
 

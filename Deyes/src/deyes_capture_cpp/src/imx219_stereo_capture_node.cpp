@@ -15,6 +15,8 @@
 #include <vector>
 
 #include <gst/base/gstbasesink.h>
+#include <diagnostic_msgs/msg/diagnostic_status.hpp>
+#include <diagnostic_msgs/msg/key_value.hpp>
 #include <yaml-cpp/yaml.h>
 
 namespace
@@ -36,6 +38,18 @@ double percentile(std::vector<double> values, double ratio)
   const auto index = static_cast<std::size_t>(
     std::floor(ratio * static_cast<double>(values.size() - 1U)));
   return values[index];
+}
+
+std::string format_metric(double value, int precision)
+{
+  if (!std::isfinite(value)) {
+    return "nan";
+  }
+  std::ostringstream stream;
+  stream.setf(std::ios::fixed);
+  stream.precision(precision);
+  stream << value;
+  return stream.str();
 }
 
 template<std::size_t N>
@@ -367,6 +381,8 @@ Imx219StereoCaptureNode::Imx219StereoCaptureNode(const rclcpp::NodeOptions & opt
     get_parameter("left_info_topic").as_string(), rclcpp::SensorDataQoS());
   right_info_pub_ = create_publisher<sensor_msgs::msg::CameraInfo>(
     get_parameter("right_info_topic").as_string(), rclcpp::SensorDataQoS());
+  pair_diagnostics_pub_ = create_publisher<diagnostic_msgs::msg::DiagnosticArray>(
+    "/x1/stereo/pair_diagnostics", 10);
 
   const auto calib_path = get_parameter("calib_path").as_string();
   if (publish_info_ && !calib_path.empty()) {
@@ -476,12 +492,12 @@ sensor_msgs::msg::CameraInfo Imx219StereoCaptureNode::camera_info_with_stamp(
 
 sensor_msgs::msg::Image Imx219StereoCaptureNode::image_msg_from_frame(
   const FrameSnapshot & frame,
-  double stamp_sec,
   const std::string & frame_id) const
 {
   sensor_msgs::msg::Image msg;
-  const int32_t sec = static_cast<int32_t>(stamp_sec);
-  const uint32_t nanosec = static_cast<uint32_t>((stamp_sec - static_cast<double>(sec)) * 1e9);
+  const int32_t sec = static_cast<int32_t>(frame.stamp_sec);
+  const uint32_t nanosec = static_cast<uint32_t>(
+    (frame.stamp_sec - static_cast<double>(sec)) * 1e9);
   msg.header.stamp.sec = sec;
   msg.header.stamp.nanosec = nanosec;
   msg.header.frame_id = frame_id;
@@ -492,6 +508,42 @@ sensor_msgs::msg::Image Imx219StereoCaptureNode::image_msg_from_frame(
   msg.step = static_cast<uint32_t>(frame.step);
   msg.data = frame.data;
   return msg;
+}
+
+void Imx219StereoCaptureNode::publish_pair_diagnostics()
+{
+  diagnostic_msgs::msg::DiagnosticArray array;
+  const double stamp = now_sec();
+  array.header.stamp.sec = static_cast<int32_t>(stamp);
+  array.header.stamp.nanosec = static_cast<uint32_t>((stamp - static_cast<double>(array.header.stamp.sec)) * 1e9);
+
+  diagnostic_msgs::msg::DiagnosticStatus status;
+  status.name = get_name() + std::string(": stereo_pairing");
+  status.hardware_id = "imx219_stereo_pair";
+  status.level = (dropped_skew_count_ == 0U && dropped_stale_count_ == 0U) ?
+    diagnostic_msgs::msg::DiagnosticStatus::OK : diagnostic_msgs::msg::DiagnosticStatus::WARN;
+  status.message = status.level == diagnostic_msgs::msg::DiagnosticStatus::OK ? "ok" : "pairing_drops_observed";
+
+  const auto p95 = skew_history_ms_.empty() ? std::numeric_limits<double>::quiet_NaN() :
+    percentile(std::vector<double>(skew_history_ms_.begin(), skew_history_ms_.end()), 0.95);
+  const auto add = [&status](const std::string & key, const std::string & value) {
+      diagnostic_msgs::msg::KeyValue entry;
+      entry.key = key;
+      entry.value = value;
+      status.values.push_back(std::move(entry));
+    };
+  add("current_skew_ms", format_metric(last_skew_ms_, 3));
+  add("window_p95_skew_ms", format_metric(p95, 3));
+  add("left_seq", std::to_string(last_pair_left_seq_));
+  add("right_seq", std::to_string(last_pair_right_seq_));
+  add("published_pairs", std::to_string(publish_count_));
+  add("drop_skew", std::to_string(dropped_skew_count_));
+  add("drop_stale", std::to_string(dropped_stale_count_));
+  add("wait_pair", std::to_string(waiting_for_pair_count_));
+  add("left_failures", std::to_string(left_worker_->total_failures()));
+  add("right_failures", std::to_string(right_worker_->total_failures()));
+  array.status.push_back(std::move(status));
+  pair_diagnostics_pub_->publish(array);
 }
 
 double Imx219StereoCaptureNode::publish_rate_hz() const
@@ -529,6 +581,7 @@ void Imx219StereoCaptureNode::on_timer()
   const auto right_frames = right_worker_->recent_frames();
   if (left_frames.empty() || right_frames.empty()) {
     ++waiting_for_pair_count_;
+    publish_pair_diagnostics();
     maybe_log_stats(current_sec);
     return;
   }
@@ -586,6 +639,7 @@ void Imx219StereoCaptureNode::on_timer()
     } else {
       ++dropped_skew_count_;
     }
+    publish_pair_diagnostics();
     maybe_log_stats(current_sec);
     return;
   }
@@ -596,15 +650,15 @@ void Imx219StereoCaptureNode::on_timer()
     skew_history_ms_.pop_front();
   }
 
-  const double stamp_sec = (best_left->stamp_sec + best_right->stamp_sec) * 0.5;
   const double publish_start = now_sec();
   const FrameSnapshot & left_output_frame = swap_left_right_ ? *best_right : *best_left;
   const FrameSnapshot & right_output_frame = swap_left_right_ ? *best_left : *best_right;
-  left_image_pub_->publish(image_msg_from_frame(left_output_frame, stamp_sec, left_frame_id_));
-  right_image_pub_->publish(image_msg_from_frame(right_output_frame, stamp_sec, right_frame_id_));
+  // Do not conceal capture skew: each output retains its own FrameSnapshot stamp.
+  left_image_pub_->publish(image_msg_from_frame(left_output_frame, left_frame_id_));
+  right_image_pub_->publish(image_msg_from_frame(right_output_frame, right_frame_id_));
   if (publish_info_ && has_camera_info_) {
-    left_info_pub_->publish(camera_info_with_stamp(left_info_template_, stamp_sec));
-    right_info_pub_->publish(camera_info_with_stamp(right_info_template_, stamp_sec));
+    left_info_pub_->publish(camera_info_with_stamp(left_info_template_, left_output_frame.stamp_sec));
+    right_info_pub_->publish(camera_info_with_stamp(right_info_template_, right_output_frame.stamp_sec));
   }
   last_publish_duration_ms_ = (now_sec() - publish_start) * 1000.0;
 
@@ -615,6 +669,8 @@ void Imx219StereoCaptureNode::on_timer()
   }
   last_pair_left_seq_ = best_left->seq;
   last_pair_right_seq_ = best_right->seq;
+
+  publish_pair_diagnostics();
 
   maybe_log_stats(current_sec);
 }

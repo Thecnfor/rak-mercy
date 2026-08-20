@@ -58,6 +58,10 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("ground_plane_config", default_value=ground_plane_params),
         DeclareLaunchArgument("stereo_disparity_topic", default_value="/x1/stereo/disparity"),
         DeclareLaunchArgument("stereo_depth_topic", default_value="/x1/stereo/depth"),
+        DeclareLaunchArgument(
+            "stereo_left_rect_camera_info_topic",
+            default_value="/x1/stereo/left/camera_info_rect",
+        ),
         DeclareLaunchArgument("stereo_base_heatmap_topic", default_value="/x1/stereo/base_heatmap"),
         DeclareLaunchArgument(
             "stereo_base_heatmap_status_topic", default_value="/x1/stereo/base_heatmap_status"
@@ -190,10 +194,11 @@ def generate_launch_description() -> LaunchDescription:
                 "calib_path": LaunchConfiguration("calib_path"),
                 "left_image_topic": LaunchConfiguration("left_image_topic"),
                 "right_image_topic": LaunchConfiguration("right_image_topic"),
-                "left_camera_info_topic": LaunchConfiguration("left_info_topic"),
-                "right_camera_info_topic": LaunchConfiguration("right_info_topic"),
                 "disparity_topic": LaunchConfiguration("stereo_disparity_topic"),
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
+                "left_rect_camera_info_topic": LaunchConfiguration(
+                    "stereo_left_rect_camera_info_topic"
+                ),
                 "max_sync_diff_ms": LaunchConfiguration("cuda_depth_max_sync_diff_ms"),
                 "publish_period_sec": LaunchConfiguration("cuda_depth_publish_period_sec"),
                 "min_depth_m": LaunchConfiguration("cuda_depth_min_depth_m"),
@@ -222,7 +227,7 @@ def generate_launch_description() -> LaunchDescription:
             LaunchConfiguration("depth_coordinate_config"),
             {
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
-                "camera_info_topic": LaunchConfiguration("left_info_topic"),
+                "camera_info_topic": LaunchConfiguration("stereo_left_rect_camera_info_topic"),
                 "target_frame": LaunchConfiguration("depth_coordinate_target_frame"),
                 "heatmap_topic": LaunchConfiguration("stereo_base_heatmap_topic"),
                 "status_topic": LaunchConfiguration("stereo_base_heatmap_status_topic"),
@@ -270,7 +275,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "detection_topic": LaunchConfiguration("detection_boxes_topic"),
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
-                "camera_info_topic": LaunchConfiguration("left_info_topic"),
+                "camera_info_topic": LaunchConfiguration("stereo_left_rect_camera_info_topic"),
                 "target_frame": LaunchConfiguration("object_fusion_target_frame"),
                 "output_topic": LaunchConfiguration("detection_objects_3d_topic"),
                 "status_topic": LaunchConfiguration("detection_objects_3d_status_topic"),
@@ -290,7 +295,7 @@ def generate_launch_description() -> LaunchDescription:
             LaunchConfiguration("ground_plane_config"),
             {
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
-                "camera_info_topic": LaunchConfiguration("left_info_topic"),
+                "camera_info_topic": LaunchConfiguration("stereo_left_rect_camera_info_topic"),
             },
         ],
     )

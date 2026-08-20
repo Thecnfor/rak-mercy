@@ -10,6 +10,7 @@
 
   <depend>rclcpp</depend>
   <depend>sensor_msgs</depend>
+  <depend>diagnostic_msgs</depend>
   <depend>std_msgs</depend>
   <build_depend>opencv</build_depend>
   <exec_depend>opencv</exec_depend>

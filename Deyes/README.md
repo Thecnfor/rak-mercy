@@ -57,6 +57,12 @@ Deyes/
 - 当前发布链路的目标是稳定 `30 Hz`，默认按中等分辨率优先做高帧率修复，而不是长期停留在最低分辨率 debug 档。
 - `deyes_sync_monitor` 当前以 `sensor_data` QoS 订阅这些话题，默认阈值由 `config/stereo/sync_monitor.defaults.yaml` 提供。
 - 当前 `calib_path` 默认指向 `/home/elephant/mercury_grasp/config/stereo_calib.yaml`，该文件只作为链路联调和基线启动的占位参数。
+- `/x1/stereo/depth` 的投影真源是 CUDA 节点同步发布的
+  `/x1/stereo/left/camera_info_rect`，不是原始 `/x1/left_camera/camera_info`。两者具有相同
+  header、分辨率与 `left_camera_optical_frame`；下游深度、融合和点云必须订阅 rectified 话题。
+- 采集节点保留左右各自真实 capture stamp，并以标准
+  `diagnostic_msgs/DiagnosticArray` 发布 `/x1/stereo/pair_diagnostics`。静态可信深度的
+  `max_sync_diff_ms` 固定默认 10 ms，超限帧会被拒绝而不是伪造共同时间戳。
 - 在完成物理双目标定前，任何 `depth/disparity` 结果都视为 debug 基线结果，不作为 `0.20-1.00 m` 可信测距验收依据。
 - 当前已识别的主要瓶颈是 Python 图像消息构造与发布路径，而不是 IMX219 硬件本身；若执行期临时降分辨率，只作为达到稳定 `30 Hz` 的工程手段。
 - C++ 主链继续沿用 `nvarguscamerasrc + NVMM + appsink` 路线，在节点内完成左右独立采集、最近帧配对、stale/skew 门控和 `CameraInfo` 同步发布。

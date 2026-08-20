@@ -13,6 +13,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/gst.h>
 #include <rclcpp/rclcpp.hpp>
+#include <diagnostic_msgs/msg/diagnostic_array.hpp>
 #include <sensor_msgs/msg/camera_info.hpp>
 #include <sensor_msgs/msg/image.hpp>
 
@@ -102,11 +103,11 @@ private:
 
   sensor_msgs::msg::Image image_msg_from_frame(
     const FrameSnapshot & frame,
-    double stamp_sec,
     const std::string & frame_id) const;
 
   void on_timer();
   void maybe_log_stats(double now_sec);
+  void publish_pair_diagnostics();
   double publish_rate_hz() const;
   std::string skew_summary() const;
 
@@ -117,6 +118,7 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::Image>::SharedPtr right_image_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr left_info_pub_;
   rclcpp::Publisher<sensor_msgs::msg::CameraInfo>::SharedPtr right_info_pub_;
+  rclcpp::Publisher<diagnostic_msgs::msg::DiagnosticArray>::SharedPtr pair_diagnostics_pub_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   sensor_msgs::msg::CameraInfo left_info_template_;
