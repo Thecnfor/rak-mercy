@@ -32,3 +32,5 @@ yolo_detector_node:
     max_detections: 20
     publish_debug_image: false
     class_names_json: "{}"
+    # JSON array. [] means pass all classes; malformed input fails closed.
+    allowed_class_ids_json: "[]"

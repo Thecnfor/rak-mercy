@@ -13,6 +13,11 @@ from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
 
+from .yolo_detector_contract import (
+    filter_detections_by_allowed_class_ids,
+    parse_allowed_class_ids_json,
+)
+
 
 COCO80_CLASS_NAMES = {
     0: "person",
@@ -191,6 +196,7 @@ class YoloDetectorNode(Node):
             "max_detections": 20,
             "publish_debug_image": False,
             "class_names_json": "{}",
+            "allowed_class_ids_json": "[]",
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -209,6 +215,9 @@ class YoloDetectorNode(Node):
         self._publish_debug_image = bool(self.get_parameter("publish_debug_image").value)
         self._class_names_override = self._load_class_names_json(
             str(self.get_parameter("class_names_json").value)
+        )
+        self._allowed_class_ids, self._allowed_class_ids_error = parse_allowed_class_ids_json(
+            str(self.get_parameter("allowed_class_ids_json").value)
         )
 
         self._boxes_pub = self.create_publisher(
@@ -242,7 +251,15 @@ class YoloDetectorNode(Node):
         self._trt_input_index = -1
         self._trt_output_index = -1
         self._trt_device = None
-        self._load_backend()
+        if self._allowed_class_ids_error is not None:
+            self._backend_message = self._allowed_class_ids_error
+            self._publish_status(
+                "error",
+                self._backend_message,
+                allowed_class_ids_json=str(self.get_parameter("allowed_class_ids_json").value),
+            )
+        else:
+            self._load_backend()
 
         self.get_logger().info(
             "yolo_detector_node started: "
@@ -250,7 +267,8 @@ class YoloDetectorNode(Node):
             f"output_topic={str(self.get_parameter('output_topic').value)} "
             f"backend={self._backend_name} "
             f"model_path={self._model_path or '<empty>'} "
-            f"device={self._device}"
+            f"device={self._device} "
+            f"allowed_class_ids={sorted(self._allowed_class_ids)}"
         )
 
     def _load_class_names_json(self, text: str) -> dict[int, str]:
@@ -640,6 +658,10 @@ class YoloDetectorNode(Node):
             self._publish_status("error", f"inference failed: {exc}", frame_id=frame.frame_id)
             return
 
+        # All backends return their native detections first; this is the single,
+        # backend-independent class gate before messages/debug images are published.
+        detections = filter_detections_by_allowed_class_ids(detections, self._allowed_class_ids)
+
         payload = {
             "stamp_sec": frame.stamp_ns // 1_000_000_000,
             "stamp_nanosec": frame.stamp_ns % 1_000_000_000,
@@ -650,6 +672,7 @@ class YoloDetectorNode(Node):
             "image_height": frame.height,
             "inference_ms": compact_float(inference_ms),
             "detection_count": len(detections),
+            "allowed_class_ids": sorted(self._allowed_class_ids),
             "detections": detections,
         }
         msg = String()
@@ -661,6 +684,7 @@ class YoloDetectorNode(Node):
             frame_id=frame.frame_id,
             inference_ms=compact_float(inference_ms),
             detection_count=len(detections),
+            allowed_class_ids=sorted(self._allowed_class_ids),
         )
 
         if self._publish_debug_image:

@@ -1,0 +1,25 @@
+# 笔检测的安全默认配置。该文件只在显式作为 detector_config 传入时生效。
+# 训练数据必须把 pen 作为唯一类别，并固定为 class 0；不要把 COCO 预训练模型
+# 当作笔检测模型使用。model_path 为空时节点不会加载任何后端（fail-closed）。
+#
+# TensorRT 解析器仅支持 YOLOv5-style 输出 [1, N, 5+C]：xywh + objectness + class
+# scores。不能直接填入 YOLOv8、YOLO11 或 YOLO26 导出的 engine；它们需使用相应
+# 后处理适配器，或先导出为本节点明确验证过的 YOLOv5-style 输出契约。
+yolo_detector_node:
+  ros__parameters:
+    image_topic: "/x1/stereo/debug/left_rect"
+    output_topic: "/x1/detection/boxes"
+    status_topic: "/x1/detection/boxes_status"
+    debug_image_topic: "/x1/detection/debug_image"
+    publish_period_sec: 0.12
+    backend: "tensorrt"
+    model_path: ""
+    device: "cuda:0"
+    conf_threshold: 0.35
+    iou_threshold: 0.45
+    input_width: 640
+    input_height: 640
+    max_detections: 20
+    publish_debug_image: false
+    class_names_json: '{"0":"pen"}'
+    allowed_class_ids_json: "[0]"

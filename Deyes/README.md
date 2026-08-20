@@ -329,7 +329,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 ### 节点拆分
 
 - `yolo_detector`：`src/deyes_stereo/deyes_stereo/yolo_detector_node.py`
-  - 输入：`/x1/left_camera/image_raw`
+  - 默认输入：`/x1/left_camera/image_raw`；深度融合时应显式使用与深度同几何的校正左目 `/x1/stereo/debug/left_rect`。
   - 输出：`/x1/detection/boxes`、`/x1/detection/boxes_status`、`/x1/detection/debug_image`
 - `object_fusion`：`src/deyes_stereo/deyes_stereo/object_fusion_node.py`
   - 输入：`/x1/detection/boxes`、`/x1/stereo/depth`、`/x1/stereo/left/camera_info_rect`、TF
@@ -345,6 +345,8 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 
 - 实测输入/输出：`images [1, 3, 640, 640]` → `output0 [1, 25200, 85]`。
 - `yolo_detector_node` 的 `tensorrt` 后端使用 `torch.cuda` 作为 binding buffer，不依赖 `pycuda`（当前 Jetson 未安装 `pycuda`/`cuda-python`）。
+- TensorRT 后处理**只兼容 YOLOv5-style `[1, N, 5+C]`**（`xywh + objectness + class scores`）。不要直接把 YOLOv8、YOLO11 或 YOLO26 的 engine 填入 `model_path`；这些模型需要对应的输出解析适配器。
+- `allowed_class_ids_json` 是严格 JSON 整数数组；`[]` 不过滤。笔模型使用 `Deyes/config/stereo/pen_detector.defaults.yaml`：唯一类别必须是 `0=pen`、白名单 `[0]`、输入为校正左目，且空 `model_path` 会拒绝启动推理。
 - `object_fusion` 已在实机跑通：模拟检测框注入 `/x1/detection/boxes` 后可输出 `/x1/detection/objects_3d`。
 
 ### TensorRT engine 现场构建
@@ -377,6 +379,8 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_cuda_depth:=true \
   enable_depth_coordinate:=true \
   enable_detector:=true \
+  detector_config:=/path/to/pen_detector.defaults.yaml \
+  detector_image_topic:=/x1/stereo/debug/left_rect \
   detector_backend:=tensorrt \
   detector_model_path:=/path/to/yolov5s.engine \
   enable_object_fusion:=true

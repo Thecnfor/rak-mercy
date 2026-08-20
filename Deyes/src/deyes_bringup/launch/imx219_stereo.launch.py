@@ -87,6 +87,7 @@ def generate_launch_description() -> LaunchDescription:
         ),
         DeclareLaunchArgument("detector_backend", default_value="tensorrt"),
         DeclareLaunchArgument("detector_model_path", default_value=""),
+        DeclareLaunchArgument("detector_image_topic", default_value="/x1/left_camera/image_raw"),
         DeclareLaunchArgument("detector_device", default_value="cuda:0"),
         DeclareLaunchArgument("detector_conf_threshold", default_value="0.35"),
         DeclareLaunchArgument("detector_iou_threshold", default_value="0.45"),
@@ -281,7 +282,7 @@ def generate_launch_description() -> LaunchDescription:
         parameters=[
             LaunchConfiguration("detector_config"),
             {
-                "image_topic": LaunchConfiguration("left_image_topic"),
+                "image_topic": LaunchConfiguration("detector_image_topic"),
                 "output_topic": LaunchConfiguration("detection_boxes_topic"),
                 "status_topic": LaunchConfiguration("detection_boxes_status_topic"),
                 "debug_image_topic": LaunchConfiguration("detection_debug_image_topic"),
