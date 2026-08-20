@@ -1,1 +1,51 @@
 .remember/
+
+# Local environment, secrets, and editor state
+.env
+.env.*
+!.env.example
+.vscode/
+.idea/
+
+# Python and test output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ROS 2 / colcon build artifacts and recorded runtime data
+build/
+install/
+log/
+rosbag*/
+*.bag
+*.db3
+*.mcap
+*.active
+
+# JavaScript dependencies and generated bundles
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local temporary output and calibration/debug captures
+temp/
+tmp/
+*.log
+*.pcd
+
+# Offline binary assets: inventory them in depends/ASSETS.md, do not commit them.
+*.tar.gz
+*.tgz
+*.zip
+*.7z
+*.onnx
+*.engine
+*.plan
+*.pt
+*.pth
+*.weights

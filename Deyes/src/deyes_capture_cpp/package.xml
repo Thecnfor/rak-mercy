@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>deyes_capture_cpp</name>
+  <version>0.1.0</version>
+  <description>Jetson-specific high-performance stereo capture nodes for Deyes.</description>
+  <maintainer email="devnull@example.com">TRAE Agent</maintainer>
+  <license>Proprietary</license>
+
+  <buildtool_depend>ament_cmake</buildtool_depend>
+
+  <depend>rclcpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>std_msgs</depend>
+  <build_depend>opencv</build_depend>
+  <exec_depend>opencv</exec_depend>
+  <build_depend>yaml-cpp</build_depend>
+  <exec_depend>yaml-cpp</exec_depend>
+
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>ament_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

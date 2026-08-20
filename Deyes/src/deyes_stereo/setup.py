@@ -1,0 +1,31 @@
+from setuptools import find_packages, setup
+
+package_name = "deyes_stereo"
+
+setup(
+    name=package_name,
+    version="0.1.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+    ],
+    install_requires=["setuptools"],
+    zip_safe=True,
+    maintainer="TRAE Agent",
+    maintainer_email="devnull@example.com",
+    description="Deyes stereo synchronization and quality monitoring nodes.",
+    license="Proprietary",
+    tests_require=["pytest"],
+    entry_points={
+        "console_scripts": [
+            "sync_monitor = deyes_stereo.sync_monitor_node:main",
+            "imx219_stereo_publisher = deyes_stereo.imx219_stereo_publisher:main",
+            "sgbm_baseline = deyes_stereo.sgbm_baseline_node:main",
+            "depth_coordinate = deyes_stereo.depth_coordinate_node:main",
+            "yolo_detector = deyes_stereo.yolo_detector_node:main",
+            "object_fusion = deyes_stereo.object_fusion_node:main",
+            "ground_plane = deyes_stereo.ground_plane_node:main",
+        ],
+    },
+)

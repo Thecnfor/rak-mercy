@@ -8,25 +8,27 @@
 
 ## 文档
 
-- 官方中文文档（Mercury X1）：https://docs.elephantrobotics.com/docs/Mercury_X1_cn/
+工作区级开发资料统一保存在仓库外层的 `docs/`，避免规则材料、临时分析和正式源码混放。官方中文文档：https://docs.elephantrobotics.com/docs/Mercury_X1_cn/
 
 ## 快速开始
 
-> 敬请期待 —— 仓库正在初始化中，后续将补充：
+当前开发方向为 ROS 2 六轴双臂实机，优先完成：
 
-- 环境搭建与依赖安装
-- ROS 工作空间配置
-- 双臂运动控制示例
-- 视觉/抓取 demo
-- 传感器与拓展模块接入
+- 实机硬件与 ROS 2 接口盘点
+- 可取消、可反馈的双臂 Action 驱动
+- Nav2、视觉定位与抓放状态机
+- 安全互锁、异常恢复与全流程记录
 
 ## 目录结构
 
 ```
 .
 ├── README.md
-└── (待补充)
+├── depends/           # 现场机离线依赖与安装说明
+└── Deyes/             # ROS 2 双目视觉与遥感开发
 ```
+
+其中 `depends/README.md` 记录了 `Deyes` 在比赛现场机上恢复 CUDA OpenCV 环境所需的离线包和安装步骤。
 
 ## License
 

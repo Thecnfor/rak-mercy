@@ -1,0 +1,25 @@
+imx219_stereo_capture_node:
+  ros__parameters:
+    left_sensor_id: 0
+    right_sensor_id: 1
+    width: 640
+    height: 360
+    fps: 30
+    output_encoding: "mono8"
+    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    left_image_topic: "/x1/left_camera/image_raw"
+    right_image_topic: "/x1/right_camera/image_raw"
+    left_info_topic: "/x1/left_camera/camera_info"
+    right_info_topic: "/x1/right_camera/camera_info"
+    left_frame_id: "left_camera_optical_frame"
+    right_frame_id: "right_camera_optical_frame"
+    publish_info: true
+    target_publish_hz: 30.0
+    pair_max_skew_ms: 20.0
+    frame_stale_sec: 0.2
+    history_size: 8
+    log_stats_period_sec: 2.0
+    reuse_latest_frame: false
+    rotate_180: true
+    mirror_horizontal: true
+    swap_left_right: false

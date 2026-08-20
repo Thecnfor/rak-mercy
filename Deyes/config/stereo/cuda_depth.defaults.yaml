@@ -1,0 +1,38 @@
+cuda_stereo_depth_node:
+  ros__parameters:
+    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    left_image_topic: "/x1/left_camera/image_raw"
+    right_image_topic: "/x1/right_camera/image_raw"
+    left_camera_info_topic: "/x1/left_camera/camera_info"
+    right_camera_info_topic: "/x1/right_camera/camera_info"
+    # Default to stable real-time output over overly strict pairing.
+    max_sync_diff_ms: 10.0
+    publish_period_sec: 0.07
+    frame_stale_sec: 0.2
+    frame_queue_size: 8
+    processing_overrun_factor: 1.0
+    log_stats_period_sec: 2.0
+    min_depth_m: 0.20
+    max_depth_m: 1.00
+    enable_wls_filter: false
+    wls_lambda: 8000.0
+    wls_sigma_color: 2.0
+    min_disparity: 0
+    num_disparities: 64
+    block_size: 11
+    prefilter_type: 1
+    texture_threshold: 0
+    uniqueness_ratio: 0
+    speckle_window_size: 0
+    speckle_range: 0
+    disp12_max_diff: 0
+    median_ksize: 3
+    publish_debug_rect: false
+    publish_debug_mask: false
+    disparity_topic: "/x1/stereo/disparity"
+    depth_topic: "/x1/stereo/depth"
+    debug_left_rect_topic: "/x1/stereo/debug/left_rect"
+    debug_right_rect_topic: "/x1/stereo/debug/right_rect"
+    debug_valid_mask_topic: "/x1/stereo/debug/valid_mask"
+    state_topic: "~/status"
+    state_detail_topic: "~/status_detail"

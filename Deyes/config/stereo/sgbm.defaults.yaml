@@ -1,0 +1,24 @@
+sgbm_baseline:
+  ros__parameters:
+    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    left_image_topic: "/x1/left_camera/image_raw"
+    right_image_topic: "/x1/right_camera/image_raw"
+    left_camera_info_topic: "/x1/left_camera/camera_info"
+    right_camera_info_topic: "/x1/right_camera/camera_info"
+    max_sync_diff_ms: 10.0
+    publish_period_sec: 0.10
+    min_depth_m: 0.20
+    max_depth_m: 1.50
+    min_disparity: 0
+    num_disparities: 64
+    block_size: 11
+    uniqueness_ratio: 10
+    speckle_window_size: 100
+    speckle_range: 32
+    disp12_max_diff: 1
+    pre_filter_cap: 31
+    debug_left_rect_topic: "/x1/stereo/debug/left_rect"
+    debug_right_rect_topic: "/x1/stereo/debug/right_rect"
+    debug_disparity_topic: "/x1/stereo/debug/disparity"
+    debug_depth_topic: "/x1/stereo/debug/depth"
+    debug_valid_mask_topic: "/x1/stereo/debug/valid_mask"
