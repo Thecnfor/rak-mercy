@@ -123,7 +123,7 @@ class DepthCoordinateNode(Node):
             "min_depth_m": 0.20,
             "max_depth_m": 1.00,
             "use_tf_transform": True,
-            "use_manual_transform_fallback": True,
+            "use_manual_transform_fallback": False,
             "manual_translation_m": [0.0, 0.0, 0.0],
             "manual_rpy_deg": [0.0, 0.0, 0.0],
             "source_frame_override": "",

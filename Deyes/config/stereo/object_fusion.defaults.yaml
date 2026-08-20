@@ -14,7 +14,13 @@ object_fusion_node:
     roi_shrink_ratio: 0.20
     min_valid_ratio: 0.08
     use_tf_transform: true
-    use_manual_transform_fallback: true
+    # Never invent base_link points from zero/hand-entered fallback offsets.
+    use_manual_transform_fallback: false
     manual_translation_m: [0.0, 0.0, 0.0]
     manual_rpy_deg: [0.0, 0.0, 0.0]
     source_frame_override: ""
+    # These must name an identity-matched physical stereo + hand-eye result.
+    # Until supplied and validated, objects retain camera coordinates only.
+    extrinsics_path: ""
+    stereo_calibration_path: ""
+    require_validated_extrinsics: true

@@ -1,0 +1,7 @@
+validated_extrinsics_tf_node:
+  ros__parameters:
+    # Both paths are intentionally empty.  A launch must explicitly select the
+    # physical, identity-bound pair of YAML documents.
+    extrinsics_path: ""
+    stereo_calibration_path: ""
+    status_topic: "/x1/stereo/extrinsics_status"

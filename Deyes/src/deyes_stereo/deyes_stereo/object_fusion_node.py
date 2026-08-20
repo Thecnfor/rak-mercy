@@ -22,6 +22,7 @@ from .depth_coordinate_node import (
     normalize_vec3,
     quaternion_to_rotation_matrix,
 )
+from .extrinsics_contract import ExtrinsicsValidation, load_yaml_document, validate_extrinsics
 
 
 @dataclass
@@ -58,10 +59,13 @@ class ObjectFusionNode(Node):
             "roi_shrink_ratio": 0.20,
             "min_valid_ratio": 0.08,
             "use_tf_transform": True,
-            "use_manual_transform_fallback": True,
+            "use_manual_transform_fallback": False,
             "manual_translation_m": [0.0, 0.0, 0.0],
             "manual_rpy_deg": [0.0, 0.0, 0.0],
             "source_frame_override": "",
+            "extrinsics_path": "",
+            "stereo_calibration_path": "",
+            "require_validated_extrinsics": True,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -93,6 +97,10 @@ class ObjectFusionNode(Node):
             self.get_parameter("manual_rpy_deg").value, "manual_rpy_deg"
         )
         self._source_frame_override = str(self.get_parameter("source_frame_override").value).strip()
+        self._require_validated_extrinsics = bool(
+            self.get_parameter("require_validated_extrinsics").value
+        )
+        self._extrinsics_trust = self._load_extrinsics_trust()
 
         self._tf_buffer = Buffer(cache_time=Duration(seconds=5.0))
         self._tf_listener = TransformListener(self._tf_buffer, self)
@@ -131,6 +139,16 @@ class ObjectFusionNode(Node):
             f"target_frame={self._target_frame} "
             f"output_topic={str(self.get_parameter('output_topic').value)}"
         )
+
+    def _load_extrinsics_trust(self) -> ExtrinsicsValidation:
+        if not self._require_validated_extrinsics:
+            return ExtrinsicsValidation(False, ("validated_extrinsics_required_for_base_link",))
+        try:
+            extrinsics = load_yaml_document(str(self.get_parameter("extrinsics_path").value))
+            stereo = load_yaml_document(str(self.get_parameter("stereo_calibration_path").value))
+            return validate_extrinsics(extrinsics, stereo_document=stereo)
+        except (OSError, ValueError) as exc:
+            return ExtrinsicsValidation(False, (str(exc),))
 
     def _publish_status(self, level: str, message: str) -> None:
         payload = {"level": level, "message": message}
@@ -205,6 +223,7 @@ class ObjectFusionNode(Node):
         camera_info: CameraInfo,
         rotation: np.ndarray,
         translation: np.ndarray,
+        publish_base: bool,
     ) -> dict[str, Any]:
         bbox = detection.get("bbox_xyxy") or detection.get("bbox")
         if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
@@ -250,9 +269,7 @@ class ObjectFusionNode(Node):
         x_cam = (center_u - cx) * median_depth / fx
         y_cam = (center_v - cy) * median_depth / fy
         camera_point = np.asarray([x_cam, y_cam, median_depth], dtype=np.float32)
-        base_point = rotation @ camera_point + translation
-
-        return {
+        result = {
             "status": "ok",
             "label": detection.get("class_name") or detection.get("label") or "unknown",
             "class_id": detection.get("class_id"),
@@ -263,8 +280,11 @@ class ObjectFusionNode(Node):
             "depth_median_m": compact_float(median_depth),
             "valid_ratio": compact_float(valid_ratio),
             "center_camera_m": [compact_float(v) for v in camera_point.tolist()],
-            "center_base_m": [compact_float(v) for v in base_point.tolist()],
         }
+        if publish_base:
+            base_point = rotation @ camera_point + translation
+            result["center_base_m"] = [compact_float(v) for v in base_point.tolist()]
+        return result
 
     def _build_payload(self) -> dict[str, Any]:
         if self._depth_frame is None:
@@ -279,9 +299,23 @@ class ObjectFusionNode(Node):
         if detection_frame.stamp_ns > 0 and abs(depth_frame.stamp_ns - detection_frame.stamp_ns) > self._max_detection_age_ns:
             raise RuntimeError("检测结果与深度帧时间差过大")
 
-        rotation, translation, transform_source = self._resolve_transform(depth_frame.frame_id)
+        trusted_base = bool(
+            self._extrinsics_trust.valid
+            and self._extrinsics_trust.rotation is not None
+            and self._extrinsics_trust.translation is not None
+        )
+        if trusted_base:
+            rotation = self._extrinsics_trust.rotation
+            translation = self._extrinsics_trust.translation
+            transform_source = "validated_extrinsics"
+        else:
+            rotation = np.eye(3, dtype=np.float32)
+            translation = np.zeros(3, dtype=np.float32)
+            transform_source = "withheld_unvalidated_extrinsics"
         fused = [
-            self._fuse_one_detection(det, depth_frame, self._camera_info, rotation, translation)
+            self._fuse_one_detection(
+                det, depth_frame, self._camera_info, rotation, translation, trusted_base
+            )
             for det in detection_frame.detections
         ]
 
@@ -291,6 +325,9 @@ class ObjectFusionNode(Node):
             "source_frame": depth_frame.frame_id,
             "target_frame": self._target_frame,
             "transform_source": transform_source,
+            "trusted_for_grasp": trusted_base,
+            "extrinsics_calibration_id": self._extrinsics_trust.calibration_id,
+            "extrinsics_reasons": list(self._extrinsics_trust.reasons),
             "detection_count": len(detection_frame.detections),
             "object_count": len(fused),
             "objects": fused,

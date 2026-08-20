@@ -12,7 +12,8 @@ depth_coordinate_node:
     min_depth_m: 0.20
     max_depth_m: 1.00
     use_tf_transform: true
-    use_manual_transform_fallback: true
+    # Do not turn a missing TF into a zero-offset base_link heatmap.
+    use_manual_transform_fallback: false
     manual_translation_m: [0.0, 0.0, 0.0]
     manual_rpy_deg: [0.0, 0.0, 0.0]
     source_frame_override: ""

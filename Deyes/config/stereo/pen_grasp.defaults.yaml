@@ -1,0 +1,18 @@
+pen_grasp_node:
+  ros__parameters:
+    pen_features_topic: "/x1/detection/pen_features"
+    depth_topic: "/x1/stereo/depth"
+    camera_info_topic: "/x1/stereo/left/camera_info_rect"
+    plane_topic: "/x1/ground/plane"
+    output_topic: "/x1/grasp/pen_candidates"
+    status_topic: "/x1/grasp/pen_candidates_status"
+    # Explicit physical paths are required; empty defaults enforce debug-only output.
+    extrinsics_path: ""
+    stereo_calibration_path: ""
+    max_feature_age_sec: 0.15
+    min_depth_m: 0.20
+    max_depth_m: 1.00
+    min_plane_clearance_m: 0.004
+    # Any mask or endpoint within this edge band is a truncated target, not graspable.
+    edge_margin_px: 12
+    publish_period_sec: 0.08
