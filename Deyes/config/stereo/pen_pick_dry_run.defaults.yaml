@@ -1,0 +1,22 @@
+pen_pick_dry_run_node:
+  ros__parameters:
+    candidate_topic: "/x1/grasp/pen_candidates"
+    plan_topic: "/x1/pick/dry_run_plan"
+    status_topic: "/x1/pick/dry_run_status"
+    # This node has no actuator clients.  Keep every execution gate false until
+    # a separately reviewed Mercury/Nav2 adapter and on-site validation exist.
+    enable_execution: false
+    operator_approved: false
+    site_profile_validated: false
+    max_candidate_age_sec: 0.35
+    min_detection_confidence: 0.50
+    max_depth_mad_m: 0.012
+    min_mask_depth_valid_ratio: 0.25
+    pregrasp_clearance_m: 0.12
+    approach_distance_m: 0.08
+    lift_distance_m: 0.15
+    retreat_distance_m: 0.18
+    # Fill only after physical reachability/collision validation. Equal bounds
+    # are an intentional fail-closed default and preserve ROS array typing.
+    workspace_min_base_m: [0.0, 0.0, 0.0]
+    workspace_max_base_m: [0.0, 0.0, 0.0]
