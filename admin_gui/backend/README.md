@@ -21,7 +21,7 @@ python server.py --host 127.0.0.1 --port 8765
 机器人部署：
 
 ```bash
-cd /home/elephant/deyes_ws/src/admin_gui/backend
+cd "${DEYES_ADMIN_GUI_ROOT:?Set DEYES_ADMIN_GUI_ROOT to the deployed admin_gui directory}/backend"
 python3 server.py --host 0.0.0.0 --port 8765
 ```
 

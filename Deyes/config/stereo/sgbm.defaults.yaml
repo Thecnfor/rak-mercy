@@ -1,6 +1,6 @@
 sgbm_baseline:
   ros__parameters:
-    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    calib_path: ""
     left_image_topic: "/x1/left_camera/image_raw"
     right_image_topic: "/x1/right_camera/image_raw"
     left_camera_info_topic: "/x1/left_camera/camera_info"

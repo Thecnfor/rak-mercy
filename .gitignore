@@ -9,10 +9,13 @@
 
 # Python and test output
 __pycache__/
+**/__pycache__/
 *.py[cod]
 .pytest_cache/
+*.egg-info/
 .mypy_cache/
 .ruff_cache/
+.cache/
 .coverage
 htmlcov/
 
@@ -31,6 +34,11 @@ node_modules/
 dist/
 coverage/
 *.tsbuildinfo
+.ninja_deps
+.ninja_log
+compile_commands.json
+*.core
+*.dump
 
 # Local temporary output and calibration/debug captures
 temp/

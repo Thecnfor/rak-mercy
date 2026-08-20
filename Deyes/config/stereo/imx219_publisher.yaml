@@ -1,8 +1,7 @@
 # IMX219 双目发布节点参数（实机 Jetson 使用）
 #
-# calib_path 当前指向实机 mercury_grasp 的 spec 标定文件，仅作尺寸/内参占位。
-# 完成物理标定后，应将标定文件复制到 Deyes/config/camera 并更新此路径，
-# 避免继续依赖 spec 推导结果。
+# launch 默认使用 deyes_bringup 安装的 spec 调试标定；独立运行节点时必须
+# 显式传入 Deyes/config/camera 下的物理标定文件。
 
 imx219_stereo_publisher:
   ros__parameters:
@@ -11,7 +10,7 @@ imx219_stereo_publisher:
     width: 640
     height: 360
     fps: 30
-    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    calib_path: ""
     left_image_topic: "/x1/left_camera/image_raw"
     right_image_topic: "/x1/right_camera/image_raw"
     left_info_topic: "/x1/left_camera/camera_info"

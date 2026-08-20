@@ -30,6 +30,7 @@ Deyes/
 │   └── stereo/
 ├── src/
 │   ├── deyes_bringup/
+│   ├── deyes_capture_cpp/
 │   └── deyes_stereo/
 ├── test/
 └── tools/
@@ -56,7 +57,7 @@ Deyes/
 - 自 `2026-08-18` 起，正式双目标定采样也必须复用这条 `C++/ROS` 主链，统一订阅 `/x1/left_camera/image_raw` 与 `/x1/right_camera/image_raw`；不再接受 `mercury_grasp/grab_stereo.py` 这类直连 `nvarguscamerasrc` 的旁路采集。
 - 当前发布链路的目标是稳定 `30 Hz`，默认按中等分辨率优先做高帧率修复，而不是长期停留在最低分辨率 debug 档。
 - `deyes_sync_monitor` 当前以 `sensor_data` QoS 订阅这些话题，默认阈值由 `config/stereo/sync_monitor.defaults.yaml` 提供。
-- 当前 `calib_path` 默认指向 `/home/elephant/mercury_grasp/config/stereo_calib.yaml`，该文件只作为链路联调和基线启动的占位参数。
+- launch 默认读取 `deyes_bringup` 安装的 `config/camera/stereo_calib.yaml`；该文件为 `validated=false` 的规格推导调试参数。物理标定完成后必须通过 `calib_path:=<physical_yaml>` 显式切换。
 - `/x1/stereo/depth` 的投影真源是 CUDA 节点同步发布的
   `/x1/stereo/left/camera_info_rect`，不是原始 `/x1/left_camera/camera_info`。两者具有相同
   header、分辨率与 `left_camera_optical_frame`；下游深度、融合和点云必须订阅 rectified 话题。
@@ -212,12 +213,11 @@ export LD_LIBRARY_PATH=/opt/ros/galactic/lib:/opt/ros/galactic/lib/aarch64-linux
 export OpenCV_DIR=/home/elephant/opencv-4.8.0-cuda/lib/cmake/opencv4
 export PKG_CONFIG_PATH=/home/elephant/opencv-4.8.0-cuda/lib/pkgconfig:$PKG_CONFIG_PATH
 source /opt/ros/galactic/setup.bash
-source /home/elephant/deyes_ws/install/setup.bash
+source /home/elephant/temp/deyes/install/setup.bash
 ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_monitor:=true \
   use_cpp_capture:=true \
-  enable_cuda_depth:=true \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+  enable_cuda_depth:=true
 ```
 
 - 稳定实时深度流推荐启动命令：
@@ -227,7 +227,7 @@ export LD_LIBRARY_PATH=/opt/ros/galactic/lib:/opt/ros/galactic/lib/aarch64-linux
 export OpenCV_DIR=/home/elephant/opencv-4.8.0-cuda/lib/cmake/opencv4
 export PKG_CONFIG_PATH=/home/elephant/opencv-4.8.0-cuda/lib/pkgconfig:$PKG_CONFIG_PATH
 source /opt/ros/galactic/setup.bash
-source /home/elephant/deyes_ws/install/setup.bash
+source /home/elephant/temp/deyes/install/setup.bash
 ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_monitor:=true \
   use_cpp_capture:=true \
@@ -256,8 +256,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   cuda_depth_speckle_range:=0 \
   cuda_depth_disp12_max_diff:=0 \
   cuda_depth_publish_debug_rect:=false \
-  cuda_depth_publish_debug_mask:=false \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+  cuda_depth_publish_debug_mask:=false
 ```
 
 - 上面这组参数默认追求“先稳定实时，再细调深度细节”：
@@ -369,7 +368,7 @@ with open('/path/to/yolov5s.engine', 'wb') as f:
 PY
 ```
 
-- 构建产物建议放仓库 `depends/models/yolov5s.engine` 作为现场离线资产。
+- TensorRT engine 属于机器相关构建产物，保存到 `E:/a_robot/temp/deyes/models/`；仓库 `depends/ASSETS.md` 只记录来源、版本和校验值。
 
 ### 一体化启动（检测 + 融合）
 
@@ -380,8 +379,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_detector:=true \
   detector_backend:=tensorrt \
   detector_model_path:=/path/to/yolov5s.engine \
-  enable_object_fusion:=true \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+  enable_object_fusion:=true
 ```
 
 ## 模式建议
@@ -479,7 +477,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
 - 机器人启动方式：
 
 ```bash
-cd /home/elephant/deyes_ws/src/admin_gui/backend
+cd "${DEYES_ADMIN_GUI_ROOT:?Set DEYES_ADMIN_GUI_ROOT to the deployed admin_gui directory}/backend"
 python3 server.py --host 0.0.0.0 --port 8765
 ```
 

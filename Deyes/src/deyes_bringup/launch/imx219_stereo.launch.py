@@ -19,6 +19,7 @@ def generate_launch_description() -> LaunchDescription:
     yolo_detector_params = str(pkg_share / "config" / "yolo_detector.defaults.yaml")
     object_fusion_params = str(pkg_share / "config" / "object_fusion.defaults.yaml")
     ground_plane_params = str(pkg_share / "config" / "ground_plane.defaults.yaml")
+    debug_calib = str(pkg_share / "config" / "camera" / "stereo_calib.yaml")
 
     # 左右图像话题统一使用 /x1/... 命名，与实机 x1_vision 约定对齐。
     launch_arguments = [
@@ -42,9 +43,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("monitor_hard_sync_max_ms", default_value="3.0"),
         DeclareLaunchArgument("monitor_soft_sync_max_ms", default_value="10.0"),
         DeclareLaunchArgument("monitor_allow_soft_sync", default_value="false"),
-        DeclareLaunchArgument(
-            "calib_path", default_value="/home/elephant/mercury_grasp/config/stereo_calib.yaml"
-        ),
+        DeclareLaunchArgument("calib_path", default_value=debug_calib),
         DeclareLaunchArgument("enable_monitor", default_value="true"),
         DeclareLaunchArgument("enable_cuda_depth", default_value="false"),
         DeclareLaunchArgument("cuda_depth_config", default_value=cuda_depth_params),

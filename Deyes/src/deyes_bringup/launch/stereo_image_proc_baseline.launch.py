@@ -22,6 +22,7 @@ def generate_launch_description() -> LaunchDescription:
     defaults = _load_defaults(config_dir / "stereo_image_proc.yaml")
     publisher_params = str(config_dir / "imx219_publisher.yaml")
     monitor_params = str(config_dir / "sync_monitor.defaults.yaml")
+    debug_calib = str(config_dir / "camera" / "stereo_calib.yaml")
 
     launch_arguments = [
         DeclareLaunchArgument("namespace", default_value=str(defaults["namespace"])),
@@ -32,7 +33,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument(
             "enable_monitor", default_value=str(defaults["enable_monitor"]).lower()
         ),
-        DeclareLaunchArgument("calib_path", default_value=str(defaults["calib_path"])),
+        DeclareLaunchArgument("calib_path", default_value=debug_calib),
         DeclareLaunchArgument("camera_id", default_value="imx219_stereo_pair"),
     ]
 

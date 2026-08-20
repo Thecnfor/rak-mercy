@@ -6,4 +6,4 @@ stereo_image_proc_baseline:
     approx_sync: false
     use_color: false
     enable_monitor: true
-    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    calib_path: ""

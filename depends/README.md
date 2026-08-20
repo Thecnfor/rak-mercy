@@ -174,8 +174,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 独立 CUDA 深度节点：
 
 ```bash
-ros2 launch deyes_bringup cuda_depth.launch.py \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+ros2 launch deyes_bringup cuda_depth.launch.py
 ```
 
 一体化主链：
@@ -184,8 +183,7 @@ ros2 launch deyes_bringup cuda_depth.launch.py \
 ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_monitor:=true \
   use_cpp_capture:=true \
-  enable_cuda_depth:=true \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+  enable_cuda_depth:=true
 ```
 
 ## 现场排障重点

@@ -117,7 +117,7 @@ E:/a_robot/temp/deyes/calibration/<session>/stereo_calib_candidate.yaml
 
 ```bash
 source /opt/ros/galactic/setup.bash
-source /home/elephant/deyes_ws/install/setup.bash
+source /home/elephant/temp/deyes/install/setup.bash
 ros2 launch deyes_bringup imx219_stereo.launch.py use_cpp_capture:=true \
   width:=640 height:=360 fps:=30 enable_cuda_depth:=false
 ```

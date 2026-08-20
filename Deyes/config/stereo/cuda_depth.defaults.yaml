@@ -1,6 +1,7 @@
 cuda_stereo_depth_node:
   ros__parameters:
-    calib_path: "/home/elephant/mercury_grasp/config/stereo_calib.yaml"
+    # Fail closed when run without bringup: launch must supply a calibration path.
+    calib_path: ""
     left_image_topic: "/x1/left_camera/image_raw"
     right_image_topic: "/x1/right_camera/image_raw"
     # Static trusted output rejects real capture skew above 10 ms.

@@ -44,7 +44,7 @@ elephant_imx219stereo_640x360_20260820.yaml
 
 在未完成实机盘点前，不要预先生成虚假的内参、外参或 `Q` 矩阵文件。
 
-当前 `/home/elephant/mercury_grasp/config/stereo_calib.yaml` 仅作为链路联调占位参数，不应直接复制进本目录冒充物理标定结果。
+旧 `mercury_grasp` 工程中的规格推导标定仅可作为链路联调占位参数，不应复制进本目录冒充物理标定结果。
 
 ## 校准契约（深度真源）
 

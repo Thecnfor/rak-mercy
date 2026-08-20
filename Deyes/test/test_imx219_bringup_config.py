@@ -24,6 +24,8 @@ POINTCLOUD_NODE_PATH = ROOT / "src" / "deyes_capture_cpp" / "src" / "stereo_poin
 POINTCLOUD_HELPER_PATH = ROOT / "src" / "deyes_capture_cpp" / "include" / "deyes_capture_cpp" / "depth_projection.hpp"
 POINTCLOUD_CONTRACT_PATH = ROOT / "src" / "deyes_capture_cpp" / "include" / "deyes_capture_cpp" / "stereo_pair_contract.hpp"
 SETUP_PY_PATH = ROOT / "src" / "deyes_stereo" / "setup.py"
+BRINGUP_SETUP_PATH = ROOT / "src" / "deyes_bringup" / "setup.py"
+DEBUG_CALIB_PATH = ROOT / "config" / "camera" / "stereo_calib.yaml"
 
 
 def test_cpp_capture_config_exists() -> None:
@@ -38,6 +40,21 @@ def test_launch_defaults_to_cpp_capture() -> None:
     assert 'DeclareLaunchArgument("swap_left_right", default_value="false")' in content
     assert 'package="deyes_capture_cpp"' in content
     assert 'executable="imx219_stereo_capture_node"' in content
+
+
+def test_bringup_owns_portable_debug_calibration() -> None:
+    launch_content = LAUNCH_PATH.read_text(encoding="utf-8")
+    setup_content = BRINGUP_SETUP_PATH.read_text(encoding="utf-8")
+    config_contents = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in (ROOT / "config" / "stereo").glob("*.yaml")
+    )
+
+    assert DEBUG_CALIB_PATH.is_file()
+    assert 'pkg_share / "config" / "camera" / "stereo_calib.yaml"' in launch_content
+    assert '"share/" + package_name + "/config/camera"' in setup_content
+    assert "/home/elephant/mercury_grasp" not in launch_content
+    assert "/home/elephant/mercury_grasp" not in config_contents
 
 
 def test_cpp_capture_config_enables_rotation() -> None:

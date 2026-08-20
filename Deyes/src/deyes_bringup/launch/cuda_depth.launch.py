@@ -10,15 +10,14 @@ from launch_ros.actions import Node
 def generate_launch_description() -> LaunchDescription:
     pkg_share = Path(get_package_share_directory("deyes_bringup"))
     cuda_depth_params = str(pkg_share / "config" / "cuda_depth.defaults.yaml")
+    debug_calib = str(pkg_share / "config" / "camera" / "stereo_calib.yaml")
 
     launch_arguments = [
         DeclareLaunchArgument(
             "cuda_depth_config",
             default_value=cuda_depth_params,
         ),
-        DeclareLaunchArgument(
-            "calib_path", default_value="/home/elephant/mercury_grasp/config/stereo_calib.yaml"
-        ),
+        DeclareLaunchArgument("calib_path", default_value=debug_calib),
         DeclareLaunchArgument("left_image_topic", default_value="/x1/left_camera/image_raw"),
         DeclareLaunchArgument("right_image_topic", default_value="/x1/right_camera/image_raw"),
         DeclareLaunchArgument("stereo_disparity_topic", default_value="/x1/stereo/disparity"),

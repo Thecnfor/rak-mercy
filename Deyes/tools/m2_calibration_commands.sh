@@ -7,6 +7,7 @@ ROBOT_USER="${ROBOT_USER:-elephant}"
 REMOTE_HOST="${REMOTE_HOST:-${ROBOT_USER}@${ROBOT_IP}}"
 SESSION_ID="${SESSION_ID:-$(date -u +%Y%m%dT%H%M%SZ)}"
 SESSION_DIR="${SESSION_DIR:-/home/${ROBOT_USER}/temp/deyes/calibration/${SESSION_ID}}"
+DEYES_INSTALL_ROOT="${DEYES_INSTALL_ROOT:-/home/${ROBOT_USER}/temp/deyes/install}"
 
 cat <<EOF
 Target: ${REMOTE_HOST}
@@ -14,7 +15,7 @@ Session directory: ${SESSION_DIR}
 
 1. On the robot, first launch only the formal C++ capture chain:
    source /opt/ros/galactic/setup.bash
-   source /home/${ROBOT_USER}/deyes_ws/install/setup.bash
+   source ${DEYES_INSTALL_ROOT}/setup.bash
    ros2 launch deyes_bringup imx219_stereo.launch.py use_cpp_capture:=true \\
      width:=640 height:=360 fps:=30 enable_cuda_depth:=false
 

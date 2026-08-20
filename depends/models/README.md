@@ -35,9 +35,8 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_depth_coordinate:=true \
   enable_detector:=true \
   detector_backend:=tensorrt \
-  detector_model_path:=/home/elephant/deyes_ws/yolov5s.engine \
-  enable_object_fusion:=true \
-  calib_path:=/home/elephant/mercury_grasp/config/stereo_calib.yaml
+  detector_model_path:=/home/elephant/temp/deyes/models/yolov5s.engine \
+  enable_object_fusion:=true
 ```
 
 ## 注意

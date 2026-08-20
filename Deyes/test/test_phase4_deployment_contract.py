@@ -11,6 +11,12 @@ def test_deployment_requires_environment_and_never_deletes_or_kills() -> None:
     assert 'ROBOT_IP:?' in content
     assert 'ROBOT_USER:?' in content
     assert 'REMOTE_WORKSPACE:?' in content
+    assert 'REMOTE_PROJECT_ROOT="${REMOTE_PROJECT_ROOT:-${REMOTE_WORKSPACE}/src/Deyes}"' in content
+    assert 'REMOTE_PACKAGE_ROOT="${REMOTE_PACKAGE_ROOT:-${REMOTE_PROJECT_ROOT}/src}"' in content
+    assert "--base-paths '${REMOTE_PACKAGE_ROOT}/deyes_capture_cpp'" in content
+    assert "-DOpenCV_DIR=${REMOTE_OPENCV_PREFIX}/lib/cmake/opencv4" in content
+    assert "DUPLICATE_ROS_PACKAGE:" in content
+    assert "${REMOTE_WORKSPACE}/src/\\${package}/package.xml" in content
     assert "BatchMode=yes" in content
     assert "rsync -a --delete" not in content
     assert "kill -" not in content.lower()

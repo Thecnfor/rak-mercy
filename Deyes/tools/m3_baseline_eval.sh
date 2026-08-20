@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-CALIB_PATH="${CALIB_PATH:-/home/elephant/mercury_grasp/config/stereo_calib.yaml}"
+: "${CALIB_PATH:?Set CALIB_PATH to the explicit debug or physical stereo calibration YAML.}"
 BAG_PATH="${BAG_PATH:-/path/to/a_robot/temp/deyes/rosbag/static_30s}"
 
 echo "在线图像链路 + 同步诊断："

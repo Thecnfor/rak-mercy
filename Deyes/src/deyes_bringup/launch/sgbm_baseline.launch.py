@@ -13,15 +13,14 @@ def generate_launch_description() -> LaunchDescription:
     publisher_params = str(config_dir / "imx219_publisher.yaml")
     monitor_params = str(config_dir / "sync_monitor.defaults.yaml")
     sgbm_params = str(config_dir / "sgbm.defaults.yaml")
+    debug_calib = str(config_dir / "camera" / "stereo_calib.yaml")
 
     launch_arguments = [
         DeclareLaunchArgument("left_image_topic", default_value="/x1/left_camera/image_raw"),
         DeclareLaunchArgument("right_image_topic", default_value="/x1/right_camera/image_raw"),
         DeclareLaunchArgument("left_info_topic", default_value="/x1/left_camera/camera_info"),
         DeclareLaunchArgument("right_info_topic", default_value="/x1/right_camera/camera_info"),
-        DeclareLaunchArgument(
-            "calib_path", default_value="/home/elephant/mercury_grasp/config/stereo_calib.yaml"
-        ),
+        DeclareLaunchArgument("calib_path", default_value=debug_calib),
         DeclareLaunchArgument("camera_id", default_value="imx219_stereo_pair"),
     ]
 
