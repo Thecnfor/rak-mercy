@@ -78,3 +78,50 @@ and selected-arm/gripper feedback before it can be considered for execution.
    pose under attended low-speed dry-runs.
 5. Only then implement and review a concrete Mercury/Nav2 adapter against the
    discovered robot interfaces. It must fail closed if any live gate changes.
+
+## Offline two-arm co-grasp experiment
+
+The ROS-free co-grasp modules model the explicitly selected experiment in
+which both grippers contact the same pen. This is separate from the competition
+rubric's usual two-arm case (two arms grasping different objects), and it must
+not be presented as a physically validated or scoring-complete behavior.
+
+`dual_pen_cograsp_contract` accepts exactly one trusted `base_link` candidate
+from `/x1/grasp/pen_candidates`. It uses the two
+`grasp_interval_base_m` points, assigns the higher base-link Y contact to the
+left arm, and rejects ambiguous, stale, short, long, untrusted, or out-of-zone
+geometry. A validated site profile must separately provide left/right tool-point
+workspaces and a safe lift vector; defaults cannot produce a usable plan.
+
+The no-navigation plan is:
+
+```text
+both pre-grasp ready barrier
+  -> synchronous approach
+  -> synchronous contact
+  -> synchronous close
+  -> confirm both grippers
+  -> synchronous lift
+  -> verified hold duration
+```
+
+The plan publishes an object basis only. A future hardware adapter must apply
+independently validated left/right TCP transforms and IK; the offline layer does
+not infer joint angles or tool quaternions. Any single-side rejection, timeout,
+cancel, missing feedback, excessive barrier skew, or missing grip confirmation
+prevents later phases. An unverified stop, or a lift/hold failure, locks the
+trace for attended recovery.
+
+Run the complete ROS-free regression on the development computer:
+
+```powershell
+$env:PYTHONPATH=(Resolve-Path Deyes/src/deyes_stereo).Path
+python -m pytest Deyes/test -q
+```
+
+The end-to-end synthetic replay exercises rectified image/YOLO features,
+32FC1 depth, rectified projection, camera-relative table removal, known
+synthetic extrinsics, base-frame candidates, the co-grasp plan, fake adapters,
+and the hold barrier. It proves software contracts and failure routing only;
+it does not prove stereo accuracy, physical reachability, collision clearance,
+gripper force, or safe two-arm contact with a real pen.
