@@ -19,6 +19,7 @@ def generate_launch_description() -> LaunchDescription:
     yolo_detector_params = str(pkg_share / "config" / "yolo_detector.defaults.yaml")
     object_fusion_params = str(pkg_share / "config" / "object_fusion.defaults.yaml")
     ground_plane_params = str(pkg_share / "config" / "ground_plane.defaults.yaml")
+    pen_feature_params = str(pkg_share / "config" / "pen_feature.defaults.yaml")
     debug_calib = str(pkg_share / "config" / "camera" / "stereo_calib.yaml")
 
     # 左右图像话题统一使用 /x1/... 命名，与实机 x1_vision 约定对齐。
@@ -53,6 +54,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("depth_coordinate_config", default_value=depth_coordinate_params),
         DeclareLaunchArgument("enable_detector", default_value="false"),
         DeclareLaunchArgument("detector_config", default_value=yolo_detector_params),
+        # This remains off unless the detector and rectified-left stream are both enabled.
+        DeclareLaunchArgument("enable_pen_features", default_value="false"),
+        DeclareLaunchArgument("pen_feature_config", default_value=pen_feature_params),
         DeclareLaunchArgument("enable_object_fusion", default_value="false"),
         DeclareLaunchArgument("object_fusion_config", default_value=object_fusion_params),
         DeclareLaunchArgument("object_fusion_target_frame", default_value="base_link"),
@@ -80,6 +84,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("depth_coordinate_target_frame", default_value="base_link"),
         DeclareLaunchArgument("detection_boxes_topic", default_value="/x1/detection/boxes"),
         DeclareLaunchArgument("detection_boxes_status_topic", default_value="/x1/detection/boxes_status"),
+        DeclareLaunchArgument("pen_features_topic", default_value="/x1/detection/pen_features"),
+        DeclareLaunchArgument("pen_features_status_topic", default_value="/x1/detection/pen_features_status"),
         DeclareLaunchArgument("detection_debug_image_topic", default_value="/x1/detection/debug_image"),
         DeclareLaunchArgument("detection_objects_3d_topic", default_value="/x1/detection/objects_3d"),
         DeclareLaunchArgument(
@@ -89,6 +95,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("detector_backend", default_value="tensorrt"),
         DeclareLaunchArgument("detector_model_path", default_value=""),
         DeclareLaunchArgument("detector_image_topic", default_value="/x1/stereo/debug/left_rect"),
+        DeclareLaunchArgument("pen_feature_image_topic", default_value="/x1/stereo/debug/left_rect"),
         DeclareLaunchArgument("detector_device", default_value="cuda:0"),
         DeclareLaunchArgument("detector_conf_threshold", default_value="0.35"),
         DeclareLaunchArgument("detector_iou_threshold", default_value="0.45"),
@@ -311,6 +318,24 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    pen_feature = Node(
+        package="deyes_stereo",
+        executable="pen_feature",
+        name="pen_feature_node",
+        condition=IfCondition(LaunchConfiguration("enable_pen_features")),
+        output="screen",
+        parameters=[
+            LaunchConfiguration("pen_feature_config"),
+            {
+                "detection_topic": LaunchConfiguration("detection_boxes_topic"),
+                # Must stay rectified-left so its pixels share depth geometry.
+                "image_topic": LaunchConfiguration("pen_feature_image_topic"),
+                "output_topic": LaunchConfiguration("pen_features_topic"),
+                "status_topic": LaunchConfiguration("pen_features_status_topic"),
+            },
+        ],
+    )
+
     object_fusion = Node(
         package="deyes_stereo",
         executable="object_fusion",
@@ -358,6 +383,7 @@ def generate_launch_description() -> LaunchDescription:
             pointcloud,
             depth_coordinate,
             detector,
+            pen_feature,
             object_fusion,
             ground_plane,
         ]
