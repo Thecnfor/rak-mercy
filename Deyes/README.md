@@ -110,7 +110,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   calib_path:=/path/to/your/stereo_calib.yaml
 ```
 
-M1 收敛回归推荐命令（`192.168.0.121`）：
+M1 收敛回归推荐命令（先在 shell 外设置 `ROBOT_IP=192.168.166.121`）：
 
 ```bash
 ros2 launch deyes_bringup imx219_stereo.launch.py \
@@ -287,40 +287,37 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 - 推荐调参顺序：
   1. 先看采集与 monitor 是否稳定：确认 `target_publish_hz≈30`、`drop_skew` 不持续累加，且 `deyes_sync_monitor` 不反复报 `stereo_out_of_sync`。
   2. 再看深度节点配对是否稳定：观察 `/cuda_stereo_depth_node/status` 与 `/cuda_stereo_depth_node/status_detail`，只有长期保持 `ok` 才进入下一步。
-  3. 仅在 `pair_out_of_window` 明显时再调 `cuda_depth_max_sync_diff_ms`，建议按 `10 -> 12 -> 15 ms` 小步放宽；若 monitor 已经报硬同步超限，应先回到主链修同步。
+  3. `cuda_depth_max_sync_diff_ms` 在可信模式固定为 `10 ms`；任何超过 `10 ms` 的配对都必须拒绝。若为临时 debug 放宽该值，标定与输出必须保持 `validated=false`，不得用于真值验收或抓取。
   4. 仅在 `processing_overrun` 明显时再调负载：优先关闭 debug 输出，其次降低分辨率，最后才围绕 `cuda_depth_publish_period_sec:=0.07` 做小步回推，验证是否还能继续逼近更高深度帧率。
   5. 主链和实时性稳定后，再调 `num_disparities`、`block_size`、`median_ksize` 改善有效区域与噪声，不要把图像质量参数和实时性参数混在同一轮里改。
 - 快速排查：
   - 无深度输出：
-    - 先查输入是否齐全：`ros2 topic hz /x1/left_camera/image_raw`、`ros2 topic hz /x1/right_camera/image_raw`、`ros2 topic echo --once /x1/left_camera/camera_info`、`ros2 topic echo --once /x1/right_camera/camera_info`。
-    - 再看节点状态：`ros2 topic echo /cuda_stereo_depth_node/status` 与 `ros2 topic echo /cuda_stereo_depth_node/status_detail`；若为 `missing_input`，优先补齐 `CameraInfo` 或修正输入话题名；若为 `pair_out_of_window`，先核对左右时间戳差，再小步放宽 `cuda_depth_max_sync_diff_ms`。
+    - 先查输入是否齐全：`ros2 topic hz /x1/left_camera/image_raw`、`ros2 topic hz /x1/right_camera/image_raw`。CUDA 深度节点只以左右图像和已加载的物理标定为几何输入，不依赖原始 `CameraInfo`；其校正后的 `CameraInfo` 由节点同步发布。
+    - 再看节点状态：`ros2 topic echo /cuda_stereo_depth_node/status` 与 `ros2 topic echo /cuda_stereo_depth_node/status_detail`；若为 `missing_input`，优先修复左右图像输入；若为 `pair_out_of_window`，先核对左右时间戳差并修主链，可信模式不得放宽 `10 ms` 门限。
     - 若节点启动即退出或始终无输出，优先检查 `calib_path` 是否存在且至少包含 `img_size/K1/D1/K2/D2/R/T`，并确认输入编码是 `mono8`、`bgr8` 或 `rgb8`。
   - 频繁跳帧：
     - 先读 `depth_stats` 日志和状态话题；`pair_out_of_window` 多说明左右帧时间差超过窗口，`stale_frame` 多说明上游发布抖动或深度节点来不及消费。
     - 先调整主链：确认 `pair_max_skew_ms:=20.0`、`frame_stale_sec:=0.2`、`history_size:=8` 仍有效，必要时先回到 `640x360@30` 复核主链是否稳定。
-    - 只有在主链已稳定、但深度节点仍偶发错过配对时，才考虑把 `cuda_depth_max_sync_diff_ms` 放宽到 `12-15 ms` 或把自定义 YAML 里的 `frame_queue_size` 从 `8` 小步增到 `10-12`。
+    - 主链已稳定但仍偶发错过配对时，先修正采集时间基准、队列或负载；可信模式不得把 `cuda_depth_max_sync_diff_ms` 放宽超过 `10 ms`。仅 debug 可单独调整队列，并必须保持 `validated=false`。
   - 性能退化：
     - 若 `/cuda_stereo_depth_node/status` 反复变成 `processing_overrun`，说明单轮处理时间已经超过当前发布预算；先保持 debug 输出关闭。
     - 用 `ros2 topic hz /x1/stereo/depth`、`ros2 topic hz /x1/stereo/disparity` 和节点日志里的 `last_processing_ms` 对照确认是否为纯算力瓶颈；必要时把 `cuda_depth_publish_period_sec` 临时改到 `0.04-0.05` 做验证。
     - 若放宽发布周期到 `0.07` 后恢复稳定，优先降分辨率或降低匹配负载；不要直接长期增大 `processing_overrun_factor` 来“消音”告警。
 
-## 1m 可靠深度视图验收
+## 1m 可信深度与点云验收（当前目标）
 
 - 目标距离范围：`0.20-1.00m`
 - 验收模式：优先采用 `balanced` 参数组合，兼顾连续性、误差和实时性
-- 误差目标：
-  - `MAE <= 0.05m`
-  - `P95 绝对误差 <= 0.10m`
-- 测试点位至少覆盖：
-  - `0.30m`
-  - `0.50m`
-  - `0.80m`
-  - `1.00m`
+- 真值点位与每点样本数：`0.30m`、`0.50m`、`0.80m`、`1.00m`，每点至少 `100` 帧；从左目光心到参考平面测量，禁止用滤波后的样本替代原始样本。
+- 固定误差门槛：
+  - `0.20–0.60m`：`MAE <= 0.010m`，`P95 绝对误差 <= 0.020m`；
+  - `0.60–1.00m`：`MAE <= 0.020m`，`P95 绝对误差 <= 0.030m`。
+- 任一距离样本不足、字段无效或门槛失败时，验收报告必须为 `validated=false`；不得降低门槛或以滤波掩盖偏差。
 - 稳定性目标：
-  - Jetson Xavier NX 上连续运行 `10min`
-  - `/x1/stereo/depth` 持续在线
-  - 深度链有效输出频率 `>= 12Hz`
-  - 不出现持续性 `processing_overrun`
+  - 连续运行 `10min`，采集失败计数为 `0`，所有静态配对 `<=10ms`；
+  - 左右图像各 `>=28Hz`，`/x1/stereo/depth` 与 `/x1/stereo/points` 各 `>=12Hz`；
+  - 中心 ROI 有效覆盖率 `>=85%`，且无持续性 `processing_overrun`；
+  - RViz 人工确认平面无明显弯曲/重影/分层，且光学坐标为 X 右、Y 下、Z 前。
 - 近距覆盖目标：
   - 中心 ROI 内 `0.20-1.00m` 有效深度覆盖率 `>= 85%`
   - 可连续辨识地面、挡板/墙面和中等尺寸障碍物
@@ -328,7 +325,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 ## YOLO + 深度坐标探测
 
 - 目标：在双目主链稳定输出深度后，引入目标检测，实现 `2D 检测 + 深度融合 + base_link 坐标输出`。
-- 当前目标机：`192.168.137.17`（Jetson Xavier NX，JetPack R35.3.1）。
+- 历史实测机：`192.168.137.17`（Jetson Xavier NX，JetPack R35.3.1）。这不是当前部署目标；当前机器人地址只通过 shell 环境变量 `ROBOT_IP=192.168.166.121` 注入。
 
 ### 节点拆分
 
@@ -336,10 +333,10 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   - 输入：`/x1/left_camera/image_raw`
   - 输出：`/x1/detection/boxes`、`/x1/detection/boxes_status`、`/x1/detection/debug_image`
 - `object_fusion`：`src/deyes_stereo/deyes_stereo/object_fusion_node.py`
-  - 输入：`/x1/detection/boxes`、`/x1/stereo/depth`、`/x1/left_camera/camera_info`、TF
+  - 输入：`/x1/detection/boxes`、`/x1/stereo/depth`、`/x1/stereo/left/camera_info_rect`、TF
   - 输出：`/x1/detection/objects_3d`、`/x1/detection/objects_3d_status`
 
-### 检测后端实测结论（192.168.137.17）
+### 检测后端历史实测结论（192.168.137.17，非当前目标）
 
 | 后端 | 状态 | 结论 |
 | --- | --- | --- |
@@ -440,17 +437,17 @@ ros2 launch deyes_bringup pointcloud.launch.py \
 
 ## M2 物理标定
 
-- 本轮目标：在 `192.168.0.121` 上按 `checkerboard 9x6 + 1280x720@30` 执行物理双目标定。
+- 本轮目标：在 `ROBOT_IP=192.168.166.121` 的实机上按 `checkerboard 9x6 + 640x360@30` 执行物理双目标定。
 - 执行前提：
   - 相机支架固定，不再重装。
-  - `1280x720@30` 下主链预热后进入 `publish_hz≈30`，且 `drop_skew` 不持续增长。
+  - `640x360@30` 下主链预热后进入 `publish_hz≈30`，且 `drop_skew` 不持续增长。
   - 标定板尺寸已用卡尺复测并记录。
   - 机器人标识与双目对标识可用于 YAML 命名。
 - 当前执行路径：
-  - 远端 `mercury_grasp.calibrate_stereo.py` 使用**棋盘格** `capture/compute` 流程。
+  - 远端 `deyes_stereo physical_stereo_calibration` 使用**棋盘格** `capture/compute` 流程。
   - 现场应使用 `inner corners: 9 x 6`、`print at 100% scale` 的棋盘格标定板，并记录单格边长。
 - 停止条件：
-  - `1280x720@30` 下主链无法满足标定采集前提。
+  - `640x360@30` 下主链无法满足标定采集前提。
   - 现场无法确认机器人标识、双目对标识或板尺寸。
   - 标定结果 `reproj_error > 0.50 px` 或极线误差 `P95 > 0.50 px`。
 
@@ -458,7 +455,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
 
 - 只有在生成真实物理标定 YAML 并落库到 `config/camera/` 后，才允许切换默认 `calib_path`。
 - 复验顺序：
-  - `ros2 launch deyes_bringup imx219_stereo.launch.py calib_path:=<repo_calib_yaml> width:=1280 height:=720 fps:=30`
+  - `ros2 launch deyes_bringup imx219_stereo.launch.py calib_path:=<repo_calib_yaml> width:=640 height:=360 fps:=30`
   - `ros2 launch deyes_bringup stereo_image_proc_baseline.launch.py calib_path:=<repo_calib_yaml>`
   - `ros2 launch deyes_bringup sgbm_baseline.launch.py calib_path:=<repo_calib_yaml>`
 - 通过判据：
@@ -489,5 +486,5 @@ python3 server.py --host 0.0.0.0 --port 8765
 - 浏览器访问：
 
 ```text
-http://192.168.0.121:8765
+http://${ROBOT_IP}:8765
 ```

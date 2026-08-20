@@ -27,6 +27,8 @@ setup(
             "object_fusion = deyes_stereo.object_fusion_node:main",
             "ground_plane = deyes_stereo.ground_plane_node:main",
             "physical_stereo_calibration = deyes_stereo.physical_stereo_calibration:main",
+            "stereo_acceptance = deyes_stereo.stereo_acceptance:main",
+            "runtime_acceptance_monitor = deyes_stereo.runtime_acceptance_monitor:main",
         ],
     },
 )

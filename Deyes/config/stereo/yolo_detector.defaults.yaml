@@ -2,7 +2,7 @@
 #
 # backend 支持三种取值：
 #   - "ultralytics"：走 PyTorch/Ultralytics，需在 Jetson 上安装 ultralytics 包。
-#                   当前 192.168.137.17 未安装 ultralytics，因此只作为离线/算法初版路线。
+#                   历史 192.168.137.17 未安装 ultralytics；非当前部署目标，仅作离线/算法初版路线。
 #   - "opencv_dnn"： 走 OpenCV DNN + ONNX。当前 Jetson 默认 Python 的 cv2 为 4.2.0，
 #                   实测无法导入现有 yolov5s.onnx（onnx_importer getMatFromTensor 断言失败），
 #                   因此不作为正式路线。

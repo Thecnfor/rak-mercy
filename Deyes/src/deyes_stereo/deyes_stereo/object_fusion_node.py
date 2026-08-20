@@ -46,7 +46,7 @@ class ObjectFusionNode(Node):
         defaults = {
             "detection_topic": "/x1/detection/boxes",
             "depth_topic": "/x1/stereo/depth",
-            "camera_info_topic": "/x1/left_camera/camera_info",
+            "camera_info_topic": "/x1/stereo/left/camera_info_rect",
             "target_frame": "base_link",
             "output_topic": "/x1/detection/objects_3d",
             "status_topic": "/x1/detection/objects_3d_status",

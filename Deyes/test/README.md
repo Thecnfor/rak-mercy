@@ -19,6 +19,8 @@ python3 E:/a_robot/rak-mercy/Deyes/test/test_sync_policy.py
 
 后续接入 rosbag 后，再补离线回放与回归基线测试。
 
+Phase 4 的纯 Python 回归在 `test_stereo_acceptance.py`：固定验证四个真值点、严格 MAE/P95 门槛、坏字段和 10 分钟运行门禁。现场证据请使用 `tools/m4_acceptance_commands.sh`，所有报告、rosbag 和图像均显式写入仓库外的 `temp/deyes` 会话目录。
+
 当前基线运行入口：
 
 - 在线图像链路：`ros2 launch deyes_bringup imx219_stereo.launch.py`
