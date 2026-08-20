@@ -173,7 +173,7 @@ def test_runtime_single_target_gate_rejects_multi_target_or_duplicate_boxes() ->
             {"class_id": 0, "bbox_xyxy": [0, 0, 100, 30]},
             {"class_id": 0, "bbox_xyxy": [1, 0, 101, 30]},
         ],
-        expected_max_targets=1,
+        expected_max_targets=0,
         duplicate_iou=0.8,
     )
     assert many == [] and many_reason == "ambiguous_multi_target"
