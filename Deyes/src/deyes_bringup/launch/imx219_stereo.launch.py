@@ -14,6 +14,7 @@ def generate_launch_description() -> LaunchDescription:
     cpp_capture_params = str(pkg_share / "config" / "imx219_capture_cpp.yaml")
     monitor_params = str(pkg_share / "config" / "sync_monitor.defaults.yaml")
     cuda_depth_params = str(pkg_share / "config" / "cuda_depth.defaults.yaml")
+    pointcloud_params = str(pkg_share / "config" / "pointcloud.defaults.yaml")
     depth_coordinate_params = str(pkg_share / "config" / "depth_coordinate.defaults.yaml")
     yolo_detector_params = str(pkg_share / "config" / "yolo_detector.defaults.yaml")
     object_fusion_params = str(pkg_share / "config" / "object_fusion.defaults.yaml")
@@ -47,6 +48,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("enable_monitor", default_value="true"),
         DeclareLaunchArgument("enable_cuda_depth", default_value="false"),
         DeclareLaunchArgument("cuda_depth_config", default_value=cuda_depth_params),
+        DeclareLaunchArgument("enable_pointcloud", default_value="false"),
+        DeclareLaunchArgument("pointcloud_config", default_value=pointcloud_params),
         DeclareLaunchArgument("enable_depth_coordinate", default_value="false"),
         DeclareLaunchArgument("depth_coordinate_config", default_value=depth_coordinate_params),
         DeclareLaunchArgument("enable_detector", default_value="false"),
@@ -62,6 +65,14 @@ def generate_launch_description() -> LaunchDescription:
             "stereo_left_rect_camera_info_topic",
             default_value="/x1/stereo/left/camera_info_rect",
         ),
+        DeclareLaunchArgument("stereo_points_topic", default_value="/x1/stereo/points"),
+        DeclareLaunchArgument("stereo_points_status_topic", default_value="/x1/stereo/points_status"),
+        DeclareLaunchArgument("pointcloud_calibration_id", default_value="unassigned"),
+        DeclareLaunchArgument("pointcloud_calibration_validated", default_value="false"),
+        DeclareLaunchArgument("pointcloud_min_depth_m", default_value="0.20"),
+        DeclareLaunchArgument("pointcloud_max_depth_m", default_value="1.00"),
+        DeclareLaunchArgument("pointcloud_publish_period_sec", default_value="0.07"),
+        DeclareLaunchArgument("pointcloud_sample_step", default_value="2"),
         DeclareLaunchArgument("stereo_base_heatmap_topic", default_value="/x1/stereo/base_heatmap"),
         DeclareLaunchArgument(
             "stereo_base_heatmap_status_topic", default_value="/x1/stereo/base_heatmap_status"
@@ -217,6 +228,31 @@ def generate_launch_description() -> LaunchDescription:
         ],
     )
 
+    pointcloud = Node(
+        package="deyes_capture_cpp",
+        executable="stereo_pointcloud_node",
+        name="stereo_pointcloud_node",
+        condition=IfCondition(LaunchConfiguration("enable_pointcloud")),
+        output="screen",
+        parameters=[
+            LaunchConfiguration("pointcloud_config"),
+            {
+                "depth_topic": LaunchConfiguration("stereo_depth_topic"),
+                "rectified_camera_info_topic": LaunchConfiguration(
+                    "stereo_left_rect_camera_info_topic"
+                ),
+                "points_topic": LaunchConfiguration("stereo_points_topic"),
+                "status_topic": LaunchConfiguration("stereo_points_status_topic"),
+                "calibration_id": LaunchConfiguration("pointcloud_calibration_id"),
+                "calibration_validated": LaunchConfiguration("pointcloud_calibration_validated"),
+                "min_depth_m": LaunchConfiguration("pointcloud_min_depth_m"),
+                "max_depth_m": LaunchConfiguration("pointcloud_max_depth_m"),
+                "publish_period_sec": LaunchConfiguration("pointcloud_publish_period_sec"),
+                "sample_step": LaunchConfiguration("pointcloud_sample_step"),
+            },
+        ],
+    )
+
     depth_coordinate = Node(
         package="deyes_stereo",
         executable="depth_coordinate",
@@ -302,5 +338,15 @@ def generate_launch_description() -> LaunchDescription:
 
     return LaunchDescription(
         launch_arguments
-        + [cpp_capture, python_publisher, monitor, cuda_depth, depth_coordinate, detector, object_fusion, ground_plane]
+        + [
+            cpp_capture,
+            python_publisher,
+            monitor,
+            cuda_depth,
+            pointcloud,
+            depth_coordinate,
+            detector,
+            object_fusion,
+            ground_plane,
+        ]
     )

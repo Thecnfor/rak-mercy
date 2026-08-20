@@ -4,12 +4,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG_PATH = ROOT / "config" / "stereo" / "imx219_capture_cpp.yaml"
 CUDA_DEPTH_CONFIG_PATH = ROOT / "config" / "stereo" / "cuda_depth.defaults.yaml"
+POINTCLOUD_CONFIG_PATH = ROOT / "config" / "stereo" / "pointcloud.defaults.yaml"
 DEPTH_COORDINATE_CONFIG_PATH = ROOT / "config" / "stereo" / "depth_coordinate.defaults.yaml"
 YOLO_DETECTOR_CONFIG_PATH = ROOT / "config" / "stereo" / "yolo_detector.defaults.yaml"
 OBJECT_FUSION_CONFIG_PATH = ROOT / "config" / "stereo" / "object_fusion.defaults.yaml"
 GROUND_PLANE_CONFIG_PATH = ROOT / "config" / "stereo" / "ground_plane.defaults.yaml"
 LAUNCH_PATH = ROOT / "src" / "deyes_bringup" / "launch" / "imx219_stereo.launch.py"
 CUDA_DEPTH_LAUNCH_PATH = ROOT / "src" / "deyes_bringup" / "launch" / "cuda_depth.launch.py"
+POINTCLOUD_LAUNCH_PATH = ROOT / "src" / "deyes_bringup" / "launch" / "pointcloud.launch.py"
 DEPTH_COORDINATE_NODE_PATH = (
     ROOT / "src" / "deyes_stereo" / "deyes_stereo" / "depth_coordinate_node.py"
 )
@@ -18,6 +20,9 @@ YOLO_DETECTOR_NODE_PATH = ROOT / "src" / "deyes_stereo" / "deyes_stereo" / "yolo
 GROUND_PLANE_NODE_PATH = ROOT / "src" / "deyes_stereo" / "deyes_stereo" / "ground_plane_node.py"
 CUDA_DEPTH_NODE_PATH = ROOT / "src" / "deyes_capture_cpp" / "src" / "cuda_stereo_depth_node.cpp"
 CUDA_DEPTH_CMAKE_PATH = ROOT / "src" / "deyes_capture_cpp" / "CMakeLists.txt"
+POINTCLOUD_NODE_PATH = ROOT / "src" / "deyes_capture_cpp" / "src" / "stereo_pointcloud_node.cpp"
+POINTCLOUD_HELPER_PATH = ROOT / "src" / "deyes_capture_cpp" / "include" / "deyes_capture_cpp" / "depth_projection.hpp"
+POINTCLOUD_CONTRACT_PATH = ROOT / "src" / "deyes_capture_cpp" / "include" / "deyes_capture_cpp" / "stereo_pair_contract.hpp"
 SETUP_PY_PATH = ROOT / "src" / "deyes_stereo" / "setup.py"
 
 
@@ -86,6 +91,42 @@ def test_cuda_depth_launch_defaults_are_consistent() -> None:
     for expected in expected_arguments:
         assert expected in integrated
         assert expected in standalone
+
+
+def test_pointcloud_defaults_and_launch_are_explicitly_debug_only() -> None:
+    config_content = POINTCLOUD_CONFIG_PATH.read_text(encoding="utf-8")
+    launch_content = LAUNCH_PATH.read_text(encoding="utf-8")
+    standalone = POINTCLOUD_LAUNCH_PATH.read_text(encoding="utf-8")
+    node_content = POINTCLOUD_NODE_PATH.read_text(encoding="utf-8")
+    helper_content = POINTCLOUD_HELPER_PATH.read_text(encoding="utf-8")
+    contract_content = POINTCLOUD_CONTRACT_PATH.read_text(encoding="utf-8")
+    cmake_content = CUDA_DEPTH_CMAKE_PATH.read_text(encoding="utf-8")
+
+    assert "calibration_validated: false" in config_content
+    assert 'depth_topic: "/x1/stereo/depth"' in config_content
+    assert 'rectified_camera_info_topic: "/x1/stereo/left/camera_info_rect"' in config_content
+    assert 'points_topic: "/x1/stereo/points"' in config_content
+    assert 'status_topic: "/x1/stereo/points_status"' in config_content
+    assert "sample_step: 2" in config_content
+    assert 'DeclareLaunchArgument("enable_pointcloud", default_value="false")' in launch_content
+    assert 'DeclareLaunchArgument("pointcloud_config", default_value=pointcloud_params)' in launch_content
+    assert 'executable="stereo_pointcloud_node"' in launch_content
+    assert '"rectified_camera_info_topic": LaunchConfiguration(' in launch_content
+    assert '"stereo_left_rect_camera_info_topic"' in launch_content
+    assert 'executable="stereo_pointcloud_node"' in standalone
+    assert "rclcpp::SensorDataQoS()" in node_content
+    assert "validate_stereo_pair_contract(contract_input)" in node_content
+    assert 'input.depth_encoding != "32FC1"' in contract_content
+    assert "input.depth_stamp_ns != input.camera_info_stamp_ns" in contract_content
+    assert "debug_rviz_only" in node_content
+    assert "calibration_validated=true requires a non-empty calibration_id" in node_content
+    assert "sensor_msgs::msg::PointField::FLOAT32" in node_content
+    assert "project_depth_pixel" in node_content
+    assert '"no_valid_points"' in node_content
+    assert "has_valid_points(valid_points)" in node_content
+    assert "organized_cloud_layout" in helper_content
+    assert "stereo_pointcloud_node" in cmake_content
+    assert "ament_add_gtest(test_depth_projection" in cmake_content
 
 
 def test_depth_coordinate_launch_and_defaults_exist() -> None:

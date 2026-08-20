@@ -401,6 +401,35 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   - 保持主深度链不变，优先通过 `depth_coordinate_node` 的 `sample_step/max_points` 提高热力图细节
   - 若要尝试 `WLS on`，必须重新检查 `processing_ms` 是否仍满足当前发布预算
 
+## 校正深度点云（Phase 3）
+
+`stereo_pointcloud_node` 是不依赖 PCL 的正式点云投影节点。它只接受 CUDA 深度节点成对发布的：
+
+- `/x1/stereo/depth`：`32FC1`，单位米；
+- `/x1/stereo/left/camera_info_rect`：同一 `header.stamp`、尺寸与 `left_camera_optical_frame` 的校正后 CameraInfo。
+
+节点拒绝 stamp、尺寸、frame、编码、数据长度或 `P[0]/P[5]/P[2]/P[6]` 不合法的整帧。输出 `/x1/stereo/points` 为有组织的 `x/y/z FLOAT32` PointCloud2；默认 `sample_step=2`、`0.20–1.00 m`，无效深度写入 NaN。`/x1/stereo/points_status` 给出有效覆盖率、丢弃/拒绝计数、标定 ID 与处理耗时。
+
+集成启动（默认关闭）：
+
+```bash
+ros2 launch deyes_bringup imx219_stereo.launch.py \
+  enable_cuda_depth:=true \
+  enable_pointcloud:=true \
+  pointcloud_calibration_id:=<physical-calibration-id> \
+  pointcloud_calibration_validated:=false
+```
+
+也可在 CUDA 深度已运行时单独启动：
+
+```bash
+ros2 launch deyes_bringup pointcloud.launch.py \
+  pointcloud_calibration_id:=<physical-calibration-id> \
+  pointcloud_calibration_validated:=false
+```
+
+在物理棋盘格标定及 0.30/0.50/0.80/1.00 m 真值验收都通过以前，`calibration_validated` 必须保持 `false`。此时点云只允许 RViz/debug 使用，抓取、轨迹与任何执行器消费者不得订阅或消费它；诊断会以 `WARN debug_only` 标示。只有通过标定门禁的报告所对应、非 `unassigned` 的标定 ID 才能设置 `calibration_validated:=true`。
+
 ## 物理标定替换路径
 
 - 当前 `spec` 参数只用于链路联调和 baseline 启动。

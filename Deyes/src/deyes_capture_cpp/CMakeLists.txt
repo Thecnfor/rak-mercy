@@ -37,6 +37,10 @@ add_executable(cuda_stereo_depth_node
   src/cuda_stereo_depth_node.cpp
 )
 
+add_executable(stereo_pointcloud_node
+  src/stereo_pointcloud_node.cpp
+)
+
 target_include_directories(imx219_stereo_capture_node PRIVATE
   include
   ${OpenCV_INCLUDE_DIRS}
@@ -47,6 +51,10 @@ target_include_directories(cuda_stereo_depth_node PRIVATE
   include
   ${OpenCV_INCLUDE_DIRS}
   ${GSTREAMER_INCLUDE_DIRS}
+)
+
+target_include_directories(stereo_pointcloud_node PRIVATE
+  include
 )
 
 target_link_directories(imx219_stereo_capture_node PRIVATE
@@ -90,14 +98,29 @@ ament_target_dependencies(cuda_stereo_depth_node
   std_msgs
 )
 
+ament_target_dependencies(stereo_pointcloud_node
+  rclcpp
+  sensor_msgs
+  diagnostic_msgs
+)
+
 install(TARGETS
   imx219_stereo_capture_node
   cuda_stereo_depth_node
+  stereo_pointcloud_node
   DESTINATION lib/${PROJECT_NAME}
 )
 
 install(DIRECTORY include/
   DESTINATION include
 )
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  ament_add_gtest(test_depth_projection test/test_depth_projection.cpp)
+  if(TARGET test_depth_projection)
+    target_include_directories(test_depth_projection PRIVATE include)
+  endif()
+endif()
 
 ament_package()
