@@ -10,8 +10,8 @@
 
 本轮 `M2+M3` 约定：
 
-- 目标主机：`192.168.0.121`
-- 目标分辨率：`1280x720@30`
+- 目标主机：`192.168.166.121`（通过环境变量 `ROBOT_IP` 使用，不写入 ROS 参数或标定 YAML）
+- 目标分辨率：`640x360@30`
 - 目标板型：`checkerboard 9x6`
 - 若执行现场无法确认 `robot_id` 或 `camera_serial_or_sensorpair`，则禁止把 YAML 提交到本目录。
 
@@ -24,12 +24,13 @@
 例如：
 
 ```text
-elephant_imx219stereo_1280x720_20260818.yaml
+elephant_imx219stereo_640x360_20260820.yaml
 ```
 
 建议同时保存一份同名或同日期的标定报告到 `E:/a_robot/temp/deyes/reports/`，报告至少包含：
 
-- `reproj_error`
+- `reproj_rms_px`
+- `epipolar_p95_px`
 - 有效样本数
 - 删除样本原因统计
 - `K1/D1/K2/D2/R/T/P1/P2/Q`
@@ -53,7 +54,7 @@ elephant_imx219stereo_1280x720_20260818.yaml
 字段必须保留为 `null`，且 `validated: false`；不得填入推导或猜测的误差数值。只有
 `source: physical_checkerboard` 的实测 YAML 才可以设置 `validated: true`。
 
-`validated: true` 时运行分辨率必须严格等于 `img_size`。未验证 YAML 仅可用于 debug，节点会
+`validated: true` 时运行分辨率必须严格等于 `img_size`（本轮为 `640x360`）。未验证 YAML 仅可用于 debug，节点会
 按 `scale_x/scale_y` 缩放原始 K 后重新计算校正映射，不能作为抓取距离真源。
 
 > 已从现场 `192.168.137.17` 备份该占位参数到本目录 `stereo_calib.yaml`，用于现场恢复与链路联调。

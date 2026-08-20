@@ -26,6 +26,7 @@ setup(
             "yolo_detector = deyes_stereo.yolo_detector_node:main",
             "object_fusion = deyes_stereo.object_fusion_node:main",
             "ground_plane = deyes_stereo.ground_plane_node:main",
+            "physical_stereo_calibration = deyes_stereo.physical_stereo_calibration:main",
         ],
     },
 )
