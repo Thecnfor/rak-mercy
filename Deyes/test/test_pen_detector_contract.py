@@ -76,7 +76,7 @@ def test_launch_and_configs_preserve_default_and_provide_pen_profile() -> None:
     assert "class_names_json: '{\"0\":\"pen\"}'" in pen_defaults
     assert 'allowed_class_ids_json: "[0]"' in pen_defaults
     assert 'expected_class_count: 1' in pen_defaults
-    assert 'expected_max_targets: 1' in pen_defaults
+    assert 'expected_max_targets: 4' in pen_defaults
     assert 'DeclareLaunchArgument("detector_expected_model_sha256", default_value="")' in launch
 
 

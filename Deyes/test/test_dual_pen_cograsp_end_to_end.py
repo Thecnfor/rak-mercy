@@ -147,8 +147,9 @@ def test_one_nanosecond_stamp_skew_fails_each_relevant_contract():
     assert rejected["state"] == "rejected" and rejected["reason"] == "candidate_stale_or_stamp_missing"
 
 
-def test_pen_batch_contract_rejects_multi_target_without_co_grasp():
+def test_pen_batch_contract_preserves_multi_target_candidates_for_transport():
     feature, depth, _ = _replay()
     second = {**feature, "id": "p2", "mask_pixels_px": [[u, y + 2] for u, y in feature["mask_pixels_px"]]}
-    with pytest.raises(ValueError, match="ambiguous_multi_target"):
-        build_pen_candidates({"features": [feature, second]}, depth, INTRINSICS, plane_payload=_plane(), rotation=np.eye(3), translation=np.zeros(3), trusted_for_grasp=True)
+    result = build_pen_candidates({"features": [feature, second]}, depth, INTRINSICS, plane_payload=_plane(), rotation=np.eye(3), translation=np.zeros(3), trusted_for_grasp=True)
+    assert result["candidate_count"] == 2
+    assert {candidate["target_id"] for candidate in result["candidates"]} == {"p1", "p2"}

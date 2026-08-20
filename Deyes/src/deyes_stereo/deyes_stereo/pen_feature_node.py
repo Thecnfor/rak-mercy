@@ -6,7 +6,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
-from .pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, build_feature_payload, extract_one_pen
+from .pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, build_features_payload, extract_pen_features
 
 def _stamp(msg: Image) -> int: return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
 def _gray(msg: Image) -> np.ndarray:
@@ -29,13 +29,13 @@ class PenFeatureNode(Node):
     def _status(self, reason: str, level: str="warn", **extra: object) -> None:
         m=String(); m.data=json.dumps({"level":level,"reason":reason,**extra},separators=(",",":")); self._status_pub.publish(m)
     def _process(self,payload:dict[str,object],image:RectifiedImage)->None:
-        feature,reason=extract_one_pen(image,payload,self._params)
-        result=build_feature_payload(image,feature,reason)
+        features,rejections,frame_reason=extract_pen_features(image,payload,self._params)
+        result=build_features_payload(image,features,rejections,frame_reason)
         m=String();m.data=json.dumps(result,separators=(",",":"));self._out.publish(m)
-        if feature is None:
-            self._status(reason,frame_result="empty")
+        if frame_reason is not None:
+            self._status(frame_reason,frame_result="empty",success_count=0,failure_count=0)
             return
-        self._status(reason,"ok" if feature["axis_complete"] else "warn",target_id=feature["target_id"])
+        self._status("ok" if not rejections else "partial_target_rejection", "ok" if not rejections else "warn", success_count=len(features),failure_count=len(rejections),target_rejections=rejections)
     def _on_detection(self,msg:String)->None:
         try: payload=json.loads(msg.data); pair=self._joiner.add_detection(payload,time.monotonic_ns())
         except Exception as exc: self._status(f"invalid_detection_json:{exc}");return

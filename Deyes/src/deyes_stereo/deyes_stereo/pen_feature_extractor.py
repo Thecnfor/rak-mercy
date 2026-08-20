@@ -42,6 +42,87 @@ def _one_pen(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     return detections[0], "ok"
 
 
+def _frame_contract_reason(image: RectifiedImage, payload: dict[str, Any]) -> str | None:
+    """Validate frame-scoped metadata before any per-box pixel operation."""
+    if detection_stamp_ns(payload) != image.stamp_ns:
+        return "detection_image_stamp_mismatch"
+    if str(payload.get("frame_id") or "") != image.frame_id:
+        return "detection_image_frame_mismatch"
+    if int(payload.get("image_width", 0) or 0) != image.width or int(payload.get("image_height", 0) or 0) != image.height:
+        return "detection_image_size_mismatch"
+    return None
+
+
+def _bbox_sort_key(detection: dict[str, Any], source_index: int) -> tuple[float, ...]:
+    """Make a fallback identity order independent of detector list ordering."""
+    bbox = detection.get("bbox_xyxy")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return (float("inf"), float("inf"), float("inf"), float("inf"), float(source_index))
+    try:
+        x0, y0, x1, y1 = (float(value) for value in bbox)
+        return ((x0 + x1) * .5, (y0 + y1) * .5, -float(detection.get("confidence", 0.0) or 0.0), x0, float(source_index))
+    except (TypeError, ValueError):
+        return (float("inf"), float("inf"), float("inf"), float("inf"), float(source_index))
+
+
+def _normalise_pen_detections(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return pen boxes with unique, deterministic per-frame identities.
+
+    YOLO's target gate already emits stable ``det_index``/``target_id`` values.
+    This defensive normalization also makes hand-authored or object-fusion
+    payloads safe: duplicate indexes are reassigned in a geometry-stable order
+    and duplicate IDs receive a deterministic ``__det_XX`` suffix.
+    """
+    payload_detections = payload.get("detections", [])
+    if not isinstance(payload_detections, list):
+        return []
+    raw = [
+        (source_index, dict(item))
+        for source_index, item in enumerate(payload_detections)
+        if isinstance(item, dict) and (item.get("class_name") == "pen" or item.get("label") == "pen")
+    ]
+    supplied_indexes: set[int] = set()
+    indexed: list[tuple[int, dict[str, Any], int | None]] = []
+    for source_index, detection in raw:
+        try:
+            index = int(detection["det_index"])
+            if index < 0 or index in supplied_indexes:
+                index = None
+            else:
+                supplied_indexes.add(index)
+        except (KeyError, TypeError, ValueError):
+            index = None
+        indexed.append((source_index, detection, index))
+
+    next_index = 0
+    assigned: list[tuple[int, dict[str, Any], int]] = []
+    for source_index, detection, index in sorted(indexed, key=lambda item: _bbox_sort_key(item[1], item[0])):
+        if index is None:
+            while next_index in supplied_indexes:
+                next_index += 1
+            index = next_index
+            supplied_indexes.add(index)
+            next_index += 1
+        assigned.append((source_index, detection, index))
+
+    used_ids: set[str] = set()
+    normalised: list[dict[str, Any]] = []
+    for _, detection, index in sorted(assigned, key=lambda item: item[2]):
+        requested_id = str(detection.get("target_id") or "").strip()
+        target_id = requested_id or f"target_{index:02d}"
+        if target_id in used_ids:
+            target_id = f"{target_id}__det_{index:02d}"
+            suffix = 1
+            while target_id in used_ids:
+                target_id = f"{requested_id or 'target'}__det_{index:02d}_{suffix}"
+                suffix += 1
+        used_ids.add(target_id)
+        detection["det_index"] = index
+        detection["target_id"] = target_id
+        normalised.append(detection)
+    return normalised
+
+
 def _component(gray: np.ndarray, bbox: list[float], params: ExtractorParams) -> tuple[np.ndarray | None, str]:
     h, w = gray.shape[:2]
     x0, y0, x1, y1 = [int(round(float(v))) for v in bbox]
@@ -75,12 +156,7 @@ def _component(gray: np.ndarray, bbox: list[float], params: ExtractorParams) -> 
     return full, "ok"
 
 
-def extract_one_pen(image: RectifiedImage, payload: dict[str, Any], params: ExtractorParams = ExtractorParams()) -> tuple[dict[str, Any] | None, str]:
-    detection, reason = _one_pen(payload)
-    if detection is None: return None, reason
-    if detection_stamp_ns(payload) != image.stamp_ns: return None, "detection_image_stamp_mismatch"
-    if str(payload.get("frame_id") or "") != image.frame_id: return None, "detection_image_frame_mismatch"
-    if int(payload.get("image_width", 0) or 0) != image.width or int(payload.get("image_height", 0) or 0) != image.height: return None, "detection_image_size_mismatch"
+def _extract_detection(image: RectifiedImage, detection: dict[str, Any], params: ExtractorParams) -> tuple[dict[str, Any] | None, str]:
     bbox = detection.get("bbox_xyxy")
     if not isinstance(bbox, list) or len(bbox) != 4: return None, "invalid_bbox"
     mask, reason = _component(image.gray, bbox, params)
@@ -96,8 +172,58 @@ def extract_one_pen(image: RectifiedImage, payload: dict[str, Any], params: Extr
     near_edge = bool(np.any(endpoints[:, 0] <= params.edge_margin_px) or np.any(endpoints[:, 0] >= image.width - 1 - params.edge_margin_px) or np.any(endpoints[:, 1] <= params.edge_margin_px) or np.any(endpoints[:, 1] >= image.height - 1 - params.edge_margin_px))
     complete = axis_length >= params.min_axis_length_px and aspect >= params.min_aspect_ratio and ratio >= params.min_pca_ratio and not near_edge
     if len(points) > params.max_mask_pixels: points = points[np.linspace(0, len(points) - 1, params.max_mask_pixels, dtype=int)]
-    feature = {"label": "pen", "class_name": "pen", "id": str(detection.get("target_id") or detection.get("det_index") or "target_00"), "target_id": str(detection.get("target_id") or "target_00"), "det_index": detection.get("det_index", 0), "confidence": float(detection.get("confidence", 0.0) or 0.0), "bbox_xyxy": [float(v) for v in bbox], "mask_pixels_px": [[int(x), int(y)] for x, y in points], "axis_endpoints_px": [[round(float(v), 3) for v in point] for point in endpoints], "axis_complete": bool(complete), "quality": {"mask_pixel_count": int(len(xs)), "axis_length_px": round(axis_length, 3), "aspect_ratio": float(round(aspect, 3)), "pca_ratio": float(round(ratio, 3)), "near_image_edge": near_edge}}
+    target_id = str(detection.get("target_id") or "target_00")
+    feature = {"label": "pen", "class_name": "pen", "id": target_id, "target_id": target_id, "det_index": int(detection.get("det_index", 0) or 0), "confidence": float(detection.get("confidence", 0.0) or 0.0), "bbox_xyxy": [float(v) for v in bbox], "mask_pixels_px": [[int(x), int(y)] for x, y in points], "axis_endpoints_px": [[round(float(v), 3) for v in point] for point in endpoints], "axis_complete": bool(complete), "quality": {"mask_pixel_count": int(len(xs)), "axis_length_px": round(axis_length, 3), "aspect_ratio": float(round(aspect, 3)), "pca_ratio": float(round(ratio, 3)), "near_image_edge": near_edge}}
     return feature, "ok" if complete else "axis_incomplete"
+
+
+def extract_one_pen(image: RectifiedImage, payload: dict[str, Any], params: ExtractorParams = ExtractorParams()) -> tuple[dict[str, Any] | None, str]:
+    """Compatibility API for call sites that intentionally require one pen."""
+    detection, reason = _one_pen(payload)
+    if detection is None: return None, reason
+    frame_reason = _frame_contract_reason(image, payload)
+    if frame_reason is not None: return None, frame_reason
+    return _extract_detection(image, detection, params)
+
+
+def extract_pen_features(
+    image: RectifiedImage, payload: dict[str, Any], params: ExtractorParams = ExtractorParams(),
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], str | None]:
+    """Extract every pen independently after one exact frame-contract gate.
+
+    Returns ``(features, target_rejections, frame_rejection_reason)``.  A
+    frame rejection suppresses *all* boxes; a box rejection only suppresses
+    that target and never fabricates endpoints or an axis for it.
+    """
+    frame_reason = _frame_contract_reason(image, payload)
+    if frame_reason is not None:
+        return [], [], frame_reason
+    if payload.get("ambiguous") or payload.get("rejection_reason") == "ambiguous_multi_target":
+        return [], [], "ambiguous_multi_target"
+    detections = _normalise_pen_detections(payload)
+    if not detections:
+        return [], [], "waiting_for_one_pen"
+    features: list[dict[str, Any]] = []
+    rejections: list[dict[str, Any]] = []
+    for detection in detections:
+        try:
+            feature, reason = _extract_detection(image, detection, params)
+        except (TypeError, ValueError, cv2.error) as exc:
+            feature, reason = None, f"invalid_bbox:{exc}"
+        if feature is not None:
+            features.append(feature)
+            continue
+        rejection: dict[str, Any] = {
+            "target_id": str(detection["target_id"]), "det_index": int(detection["det_index"]), "reason": reason,
+        }
+        bbox = detection.get("bbox_xyxy")
+        if isinstance(bbox, list) and len(bbox) == 4:
+            try:
+                rejection["bbox_xyxy"] = [float(value) for value in bbox]
+            except (TypeError, ValueError):
+                pass
+        rejections.append(rejection)
+    return features, rejections, None
 
 
 def build_feature_payload(
@@ -116,6 +242,31 @@ def build_feature_payload(
         "features": [] if feature is None else [feature],
         "axis_complete": bool(feature is not None and feature.get("axis_complete", False)),
         "rejection_reason": None if feature is not None else reason,
+    }
+
+
+def build_features_payload(
+    image: RectifiedImage, features: list[dict[str, Any]], target_rejections: list[dict[str, Any]],
+    frame_rejection_reason: str | None = None,
+) -> dict[str, Any]:
+    """Build the multi-target frame schema consumed by the depth/grasp node."""
+    copied_features = list(features)
+    copied_rejections = list(target_rejections)
+    return {
+        "stamp_sec": image.stamp_ns // 1_000_000_000,
+        "stamp_nanosec": image.stamp_ns % 1_000_000_000,
+        "frame_id": image.frame_id,
+        "source_frame": image.frame_id,
+        "image_width": image.width,
+        "image_height": image.height,
+        "features": copied_features,
+        "axis_complete": bool(copied_features) and all(bool(feature.get("axis_complete", False)) for feature in copied_features),
+        "detection_count": len(copied_features) + len(copied_rejections),
+        "success_count": len(copied_features),
+        "failure_count": len(copied_rejections),
+        "axis_incomplete_count": sum(not bool(feature.get("axis_complete", False)) for feature in copied_features),
+        "target_rejections": copied_rejections,
+        "rejection_reason": frame_rejection_reason or (None if copied_features else "waiting_for_one_pen"),
     }
 
 

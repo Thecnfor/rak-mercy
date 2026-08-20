@@ -49,13 +49,11 @@ def _parse_one_pen_feature(feature: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_pen_features(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Accept exactly one target pen; all multi-target scenes fail closed."""
+    """Parse every distinct pen feature in a frame for batch candidate building."""
     features = payload.get("features") if isinstance(payload.get("features"), list) else [payload]
     candidates = [item for item in features if isinstance(item, dict) and str(item.get("label") or item.get("class_name") or "") == "pen"]
     if not candidates:
         raise ValueError("waiting/no_target")
-    if len(candidates) > 1:
-        raise ValueError("ambiguous_multi_target")
     parsed = [_parse_one_pen_feature(item) for item in candidates]
     if len({item["id"] for item in parsed}) != len(parsed):
         raise ValueError("geometric_conflict_or_indistinguishable")

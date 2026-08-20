@@ -27,7 +27,7 @@ yolo_detector_node:
     model_id: ""
     expected_model_sha256: ""
     expected_class_count: 1
-    # Training accepts multi-instance images, but the confirmed competition runtime
-    # accepts one target only.  More than one is ambiguous and cannot be grasped.
-    expected_max_targets: 1
+    # The finals table can contain several pens.  Each accepted box is processed
+    # independently downstream and assigned a stable target_id.
+    expected_max_targets: 4
     duplicate_iou: 0.80
