@@ -1,1 +1,42 @@
+# Claude 自用记忆系统(不提交)
 .remember/
+
+# macOS 自动生成的 metadata 叉(资源叉/扩展属性)
+# 在外置卷/SMB/iCloud 上写入时会自动产生,git 没用
+._*
+.DS_Store
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+
+# Linux 临时
+*~
+
+# 编辑器/IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# ROS 构建产物(避免误提交)
+build/
+devel/
+install/
+log/
+
+# 备份目录(本地临时备份)
+x1_pre_staff_reconfig_*/
+
+# 大文件/比赛视频素材(单独存放)
+ROBOTAC视频素材/
+ROBOTAC决赛/
+*.zip
+
+# Mercury X1 源码 tarball(独立分发)
+*.tar.gz
