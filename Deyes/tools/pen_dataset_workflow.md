@@ -35,10 +35,35 @@ Windows 本地整理目录对应 `E:/a_robot/temp/deyes/datasets/pen`。`output_
 0 0.516 0.432 0.387 0.064
 ```
 
-建立 `data.yaml`：
+标注完成后，先在仓库外创建 split plan（该文件是审计记录的一部分）：
+
+```json
+{
+  "schema_version": 1,
+  "dataset_version": "pen_v1",
+  "assignments": {
+    "one_entire_batch_id": "train",
+    "another_entire_batch_id": "val",
+    "a_held_out_batch_id": "test"
+  }
+}
+```
+
+每个 eligible batch 必须恰好出现一次，且 `train`/`val`/`test` 都至少有一个完整 batch。标签按 `<annotation_root>/<batch_id>/<image_stem>.txt` 放置；正样本每行只允许 `0 cx cy w h`，空桌面负样本也必须有对应的零字节 `.txt` 文件。准备工具只复制到一个从未存在过的、仓库外输出目录：
+
+```powershell
+python E:\a_robot\rak-mercy\Deyes\tools\prepare_pen_yolo_dataset.py `
+  --dataset-root E:\a_robot\temp\deyes\datasets\pen `
+  --inventory E:\a_robot\temp\deyes\datasets\pen\dataset_inventory.json `
+  --annotation-root E:\a_robot\temp\deyes\datasets\pen\annotation_v1\labels_by_batch `
+  --split-plan E:\a_robot\temp\deyes\datasets\pen\split_plan_v1.json `
+  --output-root E:\a_robot\temp\deyes\datasets\pen\yolo_v1
+```
+
+它生成带输入 SHA-256、每张图/标签 SHA-256、batch/split 记录的 `dataset_manifest.json`，并生成以下 `data.yaml`：
 
 ```yaml
-path: /home/elephant/temp/deyes/datasets/pen/yolo
+path: /home/elephant/temp/deyes/datasets/pen/yolo_v1
 train: images/train
 val: images/val
 test: images/test
@@ -54,12 +79,15 @@ names: [pen]
 训练环境和模型文件也在仓库外，例如 `/home/elephant/temp/deyes/models/pen`。以已经安装的 YOLOv5 环境为例：
 
 ```bash
-python3 train.py --img 640 --batch 16 --epochs 150 \
-  --data /home/elephant/temp/deyes/datasets/pen/yolo/data.yaml \
-  --weights yolov5s.pt --name pen_yolov5s
+# YOLOV5_ROOT 是仓库外、固定版本的 YOLOv5 checkout；所有输出留在 temp。
+python3 "$YOLOV5_ROOT/train.py" --img 640 --batch 16 --epochs 150 \
+  --data /home/elephant/temp/deyes/datasets/pen/yolo_v1/data.yaml \
+  --weights yolov5n.pt --name pen_yolov5n_v1 \
+  --project /home/elephant/temp/deyes/models/pen/runs
 
-python3 export.py --weights runs/train/pen_yolov5s/weights/best.pt \
-  --include onnx --imgsz 640 640 --simplify
+python3 "$YOLOV5_ROOT/export.py" \
+  --weights /home/elephant/temp/deyes/models/pen/runs/pen_yolov5n_v1/weights/best.pt \
+  --include onnx --imgsz 640 640 --simplify --opset 13
 ```
 
 固定姿态 pilot 只用于检查视场、曝光和采集链，不得进入任何 split。只有笔完整入画、姿态/摆放批次改变后的会话才可标注。双笔图每张写两行 `class_id=0` 标签。
@@ -70,9 +98,9 @@ Jetson TensorRT engine 与设备、TensorRT/CUDA 版本绑定。将 ONNX 拷到 
 
 ```bash
 /usr/src/tensorrt/bin/trtexec \
-  --onnx=/home/elephant/temp/deyes/models/pen/best.onnx \
-  --saveEngine=/home/elephant/temp/deyes/models/pen/best.engine \
-  --fp16
+  --onnx=/home/elephant/temp/deyes/models/pen/runs/pen_yolov5n_v1/weights/best.onnx \
+  --saveEngine=/home/elephant/temp/deyes/models/pen/pen_yolov5n_v1.engine \
+  --fp16 --shapes=images:1x3x640x640
 ```
 
 导出前后分别以同一批真实图做推理对比，并在目标 Jetson 上记录 TensorRT、CUDA、模型 SHA-256、输入尺寸和置信度/NMS 阈值。若输入包含 letterbox，标签和反投影坐标必须使用相同的缩放与 padding 规则。
@@ -84,7 +112,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   enable_cuda_depth:=true \
   enable_detector:=true \
   detector_config:=/path/to/pen_detector.defaults.yaml \
-  detector_model_path:=/home/elephant/temp/deyes/models/pen/best.engine \
+  detector_model_path:=/home/elephant/temp/deyes/models/pen/pen_yolov5n_v1.engine \
   detector_model_id:=pen_yolov5n_v1 \
   detector_expected_model_sha256:=<64-char-engine-sha256> \
   detector_expected_class_count:=1 \
