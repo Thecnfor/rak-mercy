@@ -39,6 +39,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from diagnostic_msgs.msg import DiagnosticArray
         from sensor_msgs.msg import Image, PointCloud2
         from std_msgs.msg import String
+        from rclpy.qos import qos_profile_sensor_data
     except ImportError as exc:  # Allows pure tests and reports on development PCs.
         parser.error(f"ROS 2 runtime unavailable: {exc}")
 
@@ -65,10 +66,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             self.pointcloud_status_always_validated = True
             self.pointcloud_calibration_identity_consistent = True
             self._pointcloud_calibration_identity: str | None = None
-            self.create_subscription(Image, "/x1/left_camera/image_raw", lambda _: self.left.append(time.monotonic()), 20)
-            self.create_subscription(Image, "/x1/right_camera/image_raw", lambda _: self.right.append(time.monotonic()), 20)
-            self.create_subscription(Image, "/x1/stereo/depth", lambda _: self.depth.append(time.monotonic()), 20)
-            self.create_subscription(PointCloud2, "/x1/stereo/points", lambda _: self.points.append(time.monotonic()), 20)
+            # Camera/depth/point-cloud publishers use rclcpp::SensorDataQoS
+            # (BEST_EFFORT + VOLATILE); the integer depth shorthand creates a
+            # reliable subscription and is incompatible with those streams.
+            sensor_qos = qos_profile_sensor_data
+            self.create_subscription(
+                Image, "/x1/left_camera/image_raw", lambda _: self.left.append(time.monotonic()), sensor_qos
+            )
+            self.create_subscription(
+                Image, "/x1/right_camera/image_raw", lambda _: self.right.append(time.monotonic()), sensor_qos
+            )
+            self.create_subscription(
+                Image, "/x1/stereo/depth", lambda _: self.depth.append(time.monotonic()), sensor_qos
+            )
+            self.create_subscription(
+                PointCloud2, "/x1/stereo/points", lambda _: self.points.append(time.monotonic()), sensor_qos
+            )
             self.create_subscription(DiagnosticArray, "/x1/stereo/pair_diagnostics", self.pair_diagnostics, 20)
             self.create_subscription(DiagnosticArray, "/x1/stereo/points_status", self.points_status, 20)
             self.create_subscription(String, "/cuda_stereo_depth_node/status", self.depth_status, 20)
