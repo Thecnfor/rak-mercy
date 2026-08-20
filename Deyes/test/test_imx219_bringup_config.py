@@ -298,5 +298,15 @@ def test_pen_grasp_requires_rectified_pair_and_fresh_plane_contract() -> None:
     assert 'camera_info_topic: "/x1/stereo/left/camera_info_rect"' in (ROOT / "config" / "stereo" / "pen_grasp.defaults.yaml").read_text(encoding="utf-8")
     assert "validate_rectified_depth_pair" in pen_node
     assert "validate_dynamic_plane_for_depth" in pen_node
-    assert "rectified_intrinsics(self._camera_info.p)" in pen_node
-    assert "self._camera_info.k" not in pen_node
+    assert "rectified_intrinsics(info.p)" in pen_node
+    assert ".k" not in pen_node
+    assert "ExactStampPairCache" in pen_node
+    assert "_unmatched_planes" in pen_node
+    assert "_ready.pop_oldest" in pen_node
+
+
+def test_ground_plane_uses_exact_pair_cache_before_timer_processing() -> None:
+    ground_node = GROUND_PLANE_NODE_PATH.read_text(encoding="utf-8")
+    assert "ExactStampPairCache" in ground_node
+    assert "_pending_pairs.pop_newest" in ground_node
+    assert "waiting_for_exact_rectified_depth_camera_info_pair" in ground_node

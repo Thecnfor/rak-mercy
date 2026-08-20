@@ -1,11 +1,12 @@
-"""Publish conservative office-pen grasp candidates from segmentation and depth."""
+"""Publish fail-closed pen candidates from exact-stamp depth/plane joins."""
 
 from __future__ import annotations
 
 import json
+import time
+from dataclasses import dataclass
 from typing import Any
 
-import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
@@ -20,10 +21,21 @@ from .ground_plane_contract import (
     validate_rectified_depth_pair,
 )
 from .pen_grasp_contract import build_pen_candidates
+from .stamp_pairing import BoundedStampCache, ExactStampPairCache
 
 
 def _stamp_ns(message: Any) -> int:
     return int(message.header.stamp.sec) * 1_000_000_000 + int(message.header.stamp.nanosec)
+
+
+@dataclass(frozen=True)
+class DepthSample:
+    stamp_ns: int
+    frame_id: str
+    width: int
+    height: int
+    encoding: str
+    depth: Any
 
 
 class PenGraspNode(Node):
@@ -34,21 +46,20 @@ class PenGraspNode(Node):
             "camera_info_topic": "/x1/stereo/left/camera_info_rect", "plane_topic": "/x1/ground/plane",
             "output_topic": "/x1/grasp/pen_candidates", "status_topic": "/x1/grasp/pen_candidates_status",
             "extrinsics_path": "", "stereo_calibration_path": "", "max_feature_age_sec": .15,
-            "min_depth_m": .20, "max_depth_m": 1.00, "min_plane_clearance_m": .004, "edge_margin_px": 12, "publish_period_sec": .08,
+            "min_depth_m": .20, "max_depth_m": 1.00, "min_plane_clearance_m": .004,
+            "edge_margin_px": 12, "publish_period_sec": .08, "sync_cache_capacity": 8,
+            "sync_cache_max_age_sec": .50,
         }
         for key, value in defaults.items():
             self.declare_parameter(key, value)
+        cache_age_ns = int(float(self.get_parameter("sync_cache_max_age_sec").value) * 1e9)
+        cache_capacity = int(self.get_parameter("sync_cache_capacity").value)
+        self._depth_info_pairs = ExactStampPairCache(cache_capacity, cache_age_ns)
+        self._unmatched_pairs = BoundedStampCache(cache_capacity, cache_age_ns)
+        self._unmatched_planes = BoundedStampCache(cache_capacity, cache_age_ns)
+        self._ready = BoundedStampCache(cache_capacity, cache_age_ns)
         self._feature: dict[str, Any] | None = None
         self._feature_stamp_ns = 0
-        self._plane: dict[str, Any] | None = None
-        self._depth: np.ndarray | None = None
-        self._depth_stamp_ns = 0
-        self._depth_frame_id = ""
-        self._depth_width = 0
-        self._depth_height = 0
-        self._depth_encoding = ""
-        self._camera_info: CameraInfo | None = None
-        self._last_stamp_ns = -1
         self._max_feature_age_ns = int(float(self.get_parameter("max_feature_age_sec").value) * 1e9)
         self._trust = self._load_trust()
         self._output = self.create_publisher(String, str(self.get_parameter("output_topic").value), qos_profile_sensor_data)
@@ -80,64 +91,85 @@ class PenGraspNode(Node):
         except (json.JSONDecodeError, AttributeError, TypeError) as exc:
             self._status("warn", trusted_for_grasp=False, reason=f"invalid_pen_feature_json:{exc}")
 
-    def _on_plane(self, msg: String) -> None:
-        try:
-            self._plane = json.loads(msg.data)
-        except json.JSONDecodeError:
-            self._plane = None
-
     def _on_depth(self, msg: Image) -> None:
         try:
-            self._depth = depth_msg_to_array(msg)
-            self._depth_stamp_ns = _stamp_ns(msg)
-            self._depth_frame_id = str(msg.header.frame_id)
-            self._depth_width = int(msg.width)
-            self._depth_height = int(msg.height)
-            self._depth_encoding = str(msg.encoding)
+            frame = DepthSample(_stamp_ns(msg), str(msg.header.frame_id), int(msg.width), int(msg.height), str(msg.encoding), depth_msg_to_array(msg))
         except RuntimeError as exc:
             self._status("warn", trusted_for_grasp=False, reason=str(exc))
+            return
+        pair = self._depth_info_pairs.add_left(frame.stamp_ns, frame, time.monotonic_ns())
+        if pair is not None:
+            self._accept_depth_info_pair(*pair)
 
     def _on_camera(self, msg: CameraInfo) -> None:
-        self._camera_info = msg
+        pair = self._depth_info_pairs.add_right(_stamp_ns(msg), msg, time.monotonic_ns())
+        if pair is not None:
+            self._accept_depth_info_pair(*pair)
 
-    def _on_timer(self) -> None:
-        if self._depth is None or self._camera_info is None or self._feature is None:
-            return
-        if self._depth_stamp_ns == self._last_stamp_ns:
-            return
-        if self._feature_stamp_ns and abs(self._feature_stamp_ns - self._depth_stamp_ns) > self._max_feature_age_ns:
-            self._status("warn", trusted_for_grasp=False, reason="pen_feature_depth_timestamp_mismatch")
-            return
+    def _accept_depth_info_pair(self, stamp_ns: int, frame: DepthSample, info: CameraInfo) -> None:
+        now_ns = time.monotonic_ns()
         contract = validate_rectified_depth_pair(
-            depth_stamp_ns=self._depth_stamp_ns, depth_frame_id=self._depth_frame_id,
-            depth_width=self._depth_width, depth_height=self._depth_height, depth_encoding=self._depth_encoding,
-            info_stamp_ns=_stamp_ns(self._camera_info), info_frame_id=str(self._camera_info.header.frame_id),
-            info_width=int(self._camera_info.width), info_height=int(self._camera_info.height), projection=self._camera_info.p,
+            depth_stamp_ns=frame.stamp_ns, depth_frame_id=frame.frame_id, depth_width=frame.width,
+            depth_height=frame.height, depth_encoding=frame.encoding, info_stamp_ns=_stamp_ns(info),
+            info_frame_id=str(info.header.frame_id), info_width=int(info.width), info_height=int(info.height), projection=info.p,
         )
         if not contract.valid:
             self._status("warn", trusted_for_grasp=False, reason="rectified_depth_camera_info_contract:" + ",".join(contract.reasons))
             return
-        plane_contract = validate_dynamic_plane_for_depth(
-            self._plane, depth_stamp_ns=self._depth_stamp_ns, depth_frame_id=self._depth_frame_id
-        )
+        plane = self._unmatched_planes.pop(stamp_ns, now_ns)
+        if plane is None:
+            self._unmatched_pairs.put(stamp_ns, (frame, info), now_ns)
+        else:
+            self._ready.put(stamp_ns, (frame, info, plane), now_ns)
+
+    def _on_plane(self, msg: String) -> None:
+        try:
+            plane = json.loads(msg.data)
+            stamp_ns = int(plane.get("stamp_sec", 0) or 0) * 1_000_000_000 + int(plane.get("stamp_nanosec", 0) or 0)
+        except (json.JSONDecodeError, AttributeError, TypeError, ValueError) as exc:
+            self._status("warn", trusted_for_grasp=False, reason=f"invalid_plane_json:{exc}")
+            return
+        now_ns = time.monotonic_ns()
+        pair = self._unmatched_pairs.pop(stamp_ns, now_ns)
+        if pair is None:
+            self._unmatched_planes.put(stamp_ns, plane, now_ns)
+        else:
+            self._ready.put(stamp_ns, (pair[0], pair[1], plane), now_ns)
+
+    def _on_timer(self) -> None:
+        now_ns = time.monotonic_ns()
+        self._depth_info_pairs.expire(now_ns)
+        self._unmatched_pairs.expire(now_ns)
+        self._unmatched_planes.expire(now_ns)
+        if self._feature is None:
+            self._status("waiting", trusted_for_grasp=False, reason="waiting_for_pen_feature")
+            return
+        ready = self._ready.pop_oldest(now_ns)
+        if ready is None:
+            return
+        stamp_ns, (frame, info, plane) = ready
+        if self._feature_stamp_ns and abs(self._feature_stamp_ns - stamp_ns) > self._max_feature_age_ns:
+            self._status("warn", trusted_for_grasp=False, reason="pen_feature_depth_timestamp_mismatch")
+            return
+        plane_contract = validate_dynamic_plane_for_depth(plane, depth_stamp_ns=stamp_ns, depth_frame_id=frame.frame_id)
         if not plane_contract.valid:
             self._status("warn", trusted_for_grasp=False, reason="table_plane_depth_contract:" + ",".join(plane_contract.reasons))
             return
         try:
             result = build_pen_candidates(
-                self._feature, self._depth, rectified_intrinsics(self._camera_info.p), plane_payload=self._plane,
+                self._feature, frame.depth, rectified_intrinsics(info.p), plane_payload=plane,
                 rotation=self._trust.rotation, translation=self._trust.translation, trusted_for_grasp=self._trust.valid,
                 min_depth_m=float(self.get_parameter("min_depth_m").value), max_depth_m=float(self.get_parameter("max_depth_m").value),
                 min_plane_clearance_m=float(self.get_parameter("min_plane_clearance_m").value), edge_margin_px=int(self.get_parameter("edge_margin_px").value),
             )
         except ValueError as exc:
             result = {"valid": False, "trusted_for_grasp": False, "reason": str(exc), "candidate_count": 0, "candidates": []}
-        result.update({"stamp_sec": self._depth_stamp_ns // 1_000_000_000, "stamp_nanosec": self._depth_stamp_ns % 1_000_000_000, "source_frame": "left_camera_optical_frame", "extrinsics_calibration_id": self._trust.calibration_id})
+        result.update({"stamp_sec": stamp_ns // 1_000_000_000, "stamp_nanosec": stamp_ns % 1_000_000_000, "source_frame": frame.frame_id, "extrinsics_calibration_id": self._trust.calibration_id})
         message = String()
         message.data = json.dumps(result, ensure_ascii=False, separators=(",", ":"))
         self._output.publish(message)
         self._status("ok" if result["valid"] else "warn", trusted_for_grasp=bool(result["trusted_for_grasp"]), reason=result["reason"], confidence=result.get("confidence", 0.0))
-        self._last_stamp_ns = self._depth_stamp_ns
+
 
 def main(args: Any = None) -> None:
     rclpy.init(args=args)

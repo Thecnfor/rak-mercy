@@ -18,6 +18,10 @@ ground_plane_node:
     max_plane_residual_rms_m: 0.010
     max_plane_residual_p95_m: 0.020
     max_normal_delta_deg: 15.0
+    # Exact-stamp depth/rectified-CameraInfo pairing; no approximate sync.
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
+    pending_pair_capacity: 2
     # Dynamic plane origins move with inliers. Keep TF disabled unless manually
     # inspecting it; it is explicitly debug-only and never a grasp frame.
     publish_debug_tf: false

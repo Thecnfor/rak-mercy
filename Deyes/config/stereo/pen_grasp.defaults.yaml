@@ -17,4 +17,8 @@ pen_grasp_node:
     min_plane_clearance_m: 0.004
     # Any mask or endpoint within this edge band is a truncated target, not graspable.
     edge_margin_px: 12
+    # Pair depth + rectified CameraInfo and dynamic planes by identical stamp.
+    # This is a bounded retention policy, not approximate-time synchronization.
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
     publish_period_sec: 0.08

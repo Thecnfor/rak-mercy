@@ -8,6 +8,7 @@ validated physical extrinsics.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -28,6 +29,7 @@ from .ground_plane_contract import (
     project_rectified_depth_pixels,
     validate_rectified_depth_pair,
 )
+from .stamp_pairing import BoundedStampCache, ExactStampPairCache
 
 
 @dataclass
@@ -84,12 +86,16 @@ class GroundPlaneNode(Node):
             "ransac_distance_threshold": .02, "ransac_iterations": 120, "min_inlier_ratio": .20,
             "max_plane_residual_rms_m": .010, "max_plane_residual_p95_m": .020,
             "max_normal_delta_deg": 15.0, "publish_debug_tf": False,
+            "sync_cache_capacity": 8, "sync_cache_max_age_sec": .50, "pending_pair_capacity": 2,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
-        self._depth_frame: Optional[DepthFrame] = None
-        self._camera_info: Optional[CameraInfo] = None
-        self._last_published_stamp_ns = -1
+        cache_age_ns = int(float(self.get_parameter("sync_cache_max_age_sec").value) * 1e9)
+        cache_capacity = int(self.get_parameter("sync_cache_capacity").value)
+        self._depth_info_pairs = ExactStampPairCache(cache_capacity, cache_age_ns)
+        self._pending_pairs = BoundedStampCache(
+            int(self.get_parameter("pending_pair_capacity").value), cache_age_ns
+        )
         self._last_normal: Optional[np.ndarray] = None
         self._last_center: Optional[np.ndarray] = None
         self._depth_topic = str(self.get_parameter("depth_topic").value)
@@ -121,21 +127,26 @@ class GroundPlaneNode(Node):
 
     def _on_depth(self, msg: Image) -> None:
         try:
-            self._depth_frame = DepthFrame(_stamp_ns(msg), str(msg.header.frame_id), int(msg.width), int(msg.height), str(msg.encoding), depth_msg_to_array(msg))
+            frame = DepthFrame(_stamp_ns(msg), str(msg.header.frame_id), int(msg.width), int(msg.height), str(msg.encoding), depth_msg_to_array(msg))
+            pair = self._depth_info_pairs.add_left(frame.stamp_ns, frame, time.monotonic_ns())
+            if pair is not None:
+                self._pending_pairs.put(pair[0], (pair[1], pair[2]), time.monotonic_ns())
         except (RuntimeError, ValueError) as exc:
-            self._depth_frame = None
             self._publish_status("invalid", str(exc))
 
     def _on_camera_info(self, msg: CameraInfo) -> None:
-        self._camera_info = msg
+        pair = self._depth_info_pairs.add_right(_stamp_ns(msg), msg, time.monotonic_ns())
+        if pair is not None:
+            self._pending_pairs.put(pair[0], (pair[1], pair[2]), time.monotonic_ns())
 
     def _on_timer(self) -> None:
-        frame, info = self._depth_frame, self._camera_info
-        if frame is None or info is None:
-            self._publish_status("waiting", "waiting_for_rectified_depth_and_camera_info")
+        now_ns = time.monotonic_ns()
+        self._depth_info_pairs.expire(now_ns)
+        pending = self._pending_pairs.pop_newest(now_ns)
+        if pending is None:
+            self._publish_status("waiting", "waiting_for_exact_rectified_depth_camera_info_pair")
             return
-        if frame.stamp_ns == self._last_published_stamp_ns:
-            return
+        _, (frame, info) = pending
         try:
             payload = self._build_payload(frame, info)
         except RuntimeError as exc:
@@ -146,7 +157,6 @@ class GroundPlaneNode(Node):
         self._plane_pub.publish(message)
         level = "degraded" if payload["degraded"] else "ok"
         self._publish_status(level, payload["reason"], inlier_ratio=payload["inlier_ratio"], residual_rms_m=payload["residual_rms_m"], residual_p95_m=payload["residual_p95_m"], normal_delta_deg=payload["normal_delta_deg"])
-        self._last_published_stamp_ns = frame.stamp_ns
 
     def _build_payload(self, frame: DepthFrame, info: CameraInfo) -> dict[str, Any]:
         contract = validate_rectified_depth_pair(depth_stamp_ns=frame.stamp_ns, depth_frame_id=frame.frame_id, depth_width=frame.width, depth_height=frame.height, depth_encoding=frame.encoding, info_stamp_ns=_stamp_ns(info), info_frame_id=str(info.header.frame_id), info_width=int(info.width), info_height=int(info.height), projection=info.p)
