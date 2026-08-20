@@ -1,0 +1,27 @@
+sim_dual_pen_candidate_node:
+  ros__parameters:
+    # Input feature payload is RGB-derived and must have exact depth metadata.
+    pen_features_topic: "/left_camera/pen_features"
+    depth_topic: "/left_camera/depth"
+    camera_info_topic: "/left_camera/camera_info_rect"
+    plane_topic: "/left_camera/ground_plane"
+    output_topic: "/sim/grasp/dual_pen_candidates"
+    status_topic: "/sim/grasp/dual_pen_candidates_status"
+    # Defaults intentionally reject.  Copy values from the manifest of the
+    # USD actually loaded by Isaac; do not reuse the prior v1 scene SHA.
+    expected_world_id: ""
+    expected_scene_sha256: ""
+    expected_seed: -1
+    expected_camera_frame: "Left_Camera"
+    pickup_table_id: "table_1"
+    # The adapter may assign RGB-visible pens to table_1 only for this exact
+    # initial scene.  Both values must be explicitly supplied at launch.
+    initial_scene_phase: ""
+    assign_visible_pens_to_pickup_table: false
+    min_depth_m: 0.20
+    max_depth_m: 2.50
+    min_plane_clearance_m: 0.004
+    edge_margin_px: 12
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
+    publish_period_sec: 0.08
