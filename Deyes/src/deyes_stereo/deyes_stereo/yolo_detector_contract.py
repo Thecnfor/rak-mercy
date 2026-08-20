@@ -3,7 +3,89 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Iterable, Mapping
+import re
+from dataclasses import dataclass
+from typing import Any, Iterable, Mapping, Sequence
+
+
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True)
+class TensorRTBinding:
+    """The runtime facts required to validate this node's narrow TRT ABI."""
+
+    index: int
+    name: str
+    is_input: bool
+    shape: tuple[int, ...]
+    dtype: str
+
+
+@dataclass(frozen=True)
+class TensorRTEngineContract:
+    """Validated static TensorRT layout used by the YOLOv5 decoder."""
+
+    input_index: int
+    output_index: int
+    input_shape: tuple[int, int, int, int]
+    output_shape: tuple[int, int, int]
+
+
+def normalize_sha256(value: str) -> str:
+    """Return a normalized digest or raise rather than silently disabling the gate."""
+    normalized = value.strip().lower()
+    if not _SHA256_RE.fullmatch(normalized):
+        raise ValueError("expected_model_sha256_must_be_a_64_character_lower_or_upper_hex_digest")
+    return normalized
+
+
+def validate_tensorrt_yolov5_contract(
+    bindings: Sequence[TensorRTBinding], *, input_width: int, input_height: int, class_count: int
+) -> TensorRTEngineContract:
+    """Fail closed unless an engine exactly matches the decoder's static ABI.
+
+    Only one explicit-batch NCHW FP32 input and one FP16/FP32
+    ``[1, N, 5+C]`` output are safe for the in-process decoder.  In particular,
+    this rejects YOLOv8/11/26 layouts, dynamic profiles and plugin engines with
+    extra bindings instead of guessing how to execute or decode them.
+    """
+    if input_width <= 0 or input_height <= 0:
+        raise ValueError("detector_input_dimensions_must_be_positive")
+    if class_count <= 0:
+        raise ValueError("expected_class_count_must_be_positive")
+    inputs = [binding for binding in bindings if binding.is_input]
+    outputs = [binding for binding in bindings if not binding.is_input]
+    if len(inputs) != 1 or len(outputs) != 1 or len(bindings) != 2:
+        raise ValueError("tensorrt_engine_must_have_exactly_one_input_and_one_output_binding")
+
+    input_binding, output_binding = inputs[0], outputs[0]
+    expected_input = (1, 3, input_height, input_width)
+    if input_binding.shape != expected_input:
+        raise ValueError(
+            f"tensorrt_input_shape_must_be_{expected_input}_got_{input_binding.shape}"
+        )
+    if input_binding.dtype != "float32":
+        raise ValueError("tensorrt_input_dtype_must_be_float32")
+    if len(output_binding.shape) != 3 or output_binding.shape[0] != 1 or output_binding.shape[1] <= 0:
+        raise ValueError("tensorrt_output_shape_must_be_static_[1,N,5+C]")
+    expected_channels = 5 + class_count
+    if output_binding.shape[2] != expected_channels:
+        raise ValueError(
+            f"tensorrt_output_shape_must_end_in_{expected_channels}_for_{class_count}_classes"
+        )
+    if output_binding.dtype not in {"float16", "float32"}:
+        raise ValueError("tensorrt_output_dtype_must_be_float16_or_float32")
+    return TensorRTEngineContract(
+        input_index=input_binding.index,
+        output_index=output_binding.index,
+        input_shape=expected_input,
+        output_shape=(
+            int(output_binding.shape[0]),
+            int(output_binding.shape[1]),
+            int(output_binding.shape[2]),
+        ),
+    )
 
 
 def parse_allowed_class_ids_json(text: str) -> tuple[frozenset[int], str | None]:
@@ -56,3 +138,54 @@ def filter_detections_by_allowed_class_ids(
         and not isinstance(detection.get("class_id"), bool)
         and int(detection["class_id"]) in allowed_class_ids
     ]
+
+
+def _bbox_iou(first: Sequence[float], second: Sequence[float]) -> float:
+    left = max(float(first[0]), float(second[0]))
+    top = max(float(first[1]), float(second[1]))
+    right = min(float(first[2]), float(second[2]))
+    bottom = min(float(first[3]), float(second[3]))
+    intersection = max(0.0, right - left) * max(0.0, bottom - top)
+    first_area = max(0.0, float(first[2]) - float(first[0])) * max(0.0, float(first[3]) - float(first[1]))
+    second_area = max(0.0, float(second[2]) - float(second[0])) * max(0.0, float(second[3]) - float(second[1]))
+    union = first_area + second_area - intersection
+    return intersection / union if union > 0.0 else 0.0
+
+
+def gate_target_detections(
+    detections: Iterable[Mapping[str, Any]], *, expected_max_targets: int, duplicate_iou: float
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Assign deterministic target IDs, or reject an ambiguous target set.
+
+    ``expected_max_targets=0`` disables the target-count policy for generic
+    detectors.  A pen profile can set it to two.  Rejected candidates are not
+    returned so the depth-fusion/grasp chain cannot accidentally consume them.
+    """
+    if expected_max_targets < 0:
+        raise ValueError("expected_max_targets_must_be_zero_or_positive")
+    if not 0.0 < duplicate_iou <= 1.0:
+        raise ValueError("duplicate_iou_must_be_in_(0,1]")
+    copied = [dict(detection) for detection in detections]
+    for detection in copied:
+        bbox = detection.get("bbox_xyxy")
+        if not isinstance(bbox, (list, tuple)) or len(bbox) != 4:
+            return [], "invalid_bbox"
+    ordered = sorted(
+        copied,
+        key=lambda detection: (
+            (float(detection["bbox_xyxy"][0]) + float(detection["bbox_xyxy"][2])) * 0.5,
+            (float(detection["bbox_xyxy"][1]) + float(detection["bbox_xyxy"][3])) * 0.5,
+            -float(detection.get("confidence", 0.0)),
+            int(detection.get("class_id", -1)),
+        ),
+    )
+    if expected_max_targets and len(ordered) > expected_max_targets:
+        return [], f"target_count_exceeds_expected_max:{len(ordered)}>{expected_max_targets}"
+    for left_index, left in enumerate(ordered):
+        for right in ordered[left_index + 1 :]:
+            if _bbox_iou(left["bbox_xyxy"], right["bbox_xyxy"]) >= duplicate_iou:
+                return [], "severe_bbox_overlap_suspected_duplicate"
+    for index, detection in enumerate(ordered):
+        detection["det_index"] = index
+        detection["target_id"] = f"target_{index:02d}"
+    return ordered, None

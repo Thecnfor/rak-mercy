@@ -17,7 +17,8 @@
 # 现场离线资产建议统一放在仓库 depends/models/ 目录，并同步到 Jetson 对应路径。
 yolo_detector_node:
   ros__parameters:
-    image_topic: "/x1/left_camera/image_raw"
+    # Detection intended for depth fusion must be geometrically aligned with depth.
+    image_topic: "/x1/stereo/debug/left_rect"
     output_topic: "/x1/detection/boxes"
     status_topic: "/x1/detection/boxes_status"
     debug_image_topic: "/x1/detection/debug_image"
@@ -32,5 +33,12 @@ yolo_detector_node:
     max_detections: 20
     publish_debug_image: false
     class_names_json: "{}"
+    # TensorRT refuses execution until both fields identify the external engine.
+    model_id: ""
+    expected_model_sha256: ""
+    expected_class_count: 80
+    # 0 leaves count unconstrained for generic detector profiles.
+    expected_max_targets: 0
+    duplicate_iou: 0.80
     # JSON array. [] means pass all classes; malformed input fails closed.
     allowed_class_ids_json: "[]"

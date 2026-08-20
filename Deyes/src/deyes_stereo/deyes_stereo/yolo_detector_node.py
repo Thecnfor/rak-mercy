@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -15,7 +16,12 @@ from std_msgs.msg import String
 
 from .yolo_detector_contract import (
     filter_detections_by_allowed_class_ids,
+    gate_target_detections,
+    normalize_sha256,
     parse_allowed_class_ids_json,
+    TensorRTBinding,
+    TensorRTEngineContract,
+    validate_tensorrt_yolov5_contract,
 )
 
 
@@ -176,12 +182,29 @@ def trt_dtype_to_torch_dtype(trt_module: Any, torch_module: Any, dtype: Any) -> 
     return mapping[dtype]
 
 
+def tensorrt_dtype_name(dtype: Any) -> str:
+    """Map TensorRT's enum spelling to the portable contract spelling."""
+    normalized = str(dtype).strip().lower()
+    for name in ("float32", "float16", "int32", "int8", "bool"):
+        if normalized.endswith(name):
+            return name
+    return normalized
+
+
+def sha256_file(path: str) -> str:
+    digest = hashlib.sha256()
+    with open(path, "rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 class YoloDetectorNode(Node):
     def __init__(self) -> None:
         super().__init__("yolo_detector_node")
 
         defaults = {
-            "image_topic": "/x1/left_camera/image_raw",
+            "image_topic": "/x1/stereo/debug/left_rect",
             "output_topic": "/x1/detection/boxes",
             "status_topic": "/x1/detection/boxes_status",
             "debug_image_topic": "/x1/detection/debug_image",
@@ -197,6 +220,11 @@ class YoloDetectorNode(Node):
             "publish_debug_image": False,
             "class_names_json": "{}",
             "allowed_class_ids_json": "[]",
+            "model_id": "",
+            "expected_model_sha256": "",
+            "expected_class_count": 80,
+            "expected_max_targets": 0,
+            "duplicate_iou": 0.80,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -213,6 +241,13 @@ class YoloDetectorNode(Node):
         self._input_height = int(self.get_parameter("input_height").value)
         self._max_detections = int(self.get_parameter("max_detections").value)
         self._publish_debug_image = bool(self.get_parameter("publish_debug_image").value)
+        self._model_id = str(self.get_parameter("model_id").value).strip()
+        self._expected_model_sha256 = str(
+            self.get_parameter("expected_model_sha256").value
+        ).strip()
+        self._expected_class_count = int(self.get_parameter("expected_class_count").value)
+        self._expected_max_targets = int(self.get_parameter("expected_max_targets").value)
+        self._duplicate_iou = float(self.get_parameter("duplicate_iou").value)
         self._class_names_override = self._load_class_names_json(
             str(self.get_parameter("class_names_json").value)
         )
@@ -251,6 +286,8 @@ class YoloDetectorNode(Node):
         self._trt_input_index = -1
         self._trt_output_index = -1
         self._trt_device = None
+        self._trt_contract: Optional[TensorRTEngineContract] = None
+        self._model_sha256 = ""
         if self._allowed_class_ids_error is not None:
             self._backend_message = self._allowed_class_ids_error
             self._publish_status(
@@ -268,6 +305,7 @@ class YoloDetectorNode(Node):
             f"backend={self._backend_name} "
             f"model_path={self._model_path or '<empty>'} "
             f"device={self._device} "
+            f"model_id={self._model_id or '<empty>'} "
             f"allowed_class_ids={sorted(self._allowed_class_ids)}"
         )
 
@@ -368,7 +406,23 @@ class YoloDetectorNode(Node):
             self._backend_message = "tensorrt backend expects model_path to point to a .engine file"
             self._publish_status("error", self._backend_message)
             return
+        if not self._model_id:
+            self._backend_message = "tensorrt backend requires a non-empty model_id"
+            self._publish_status("error", self._backend_message)
+            return
         try:
+            expected_sha256 = normalize_sha256(self._expected_model_sha256)
+        except ValueError as exc:
+            self._backend_message = str(exc)
+            self._publish_status("error", self._backend_message)
+            return
+        try:
+            actual_sha256 = sha256_file(self._model_path)
+            if actual_sha256 != expected_sha256:
+                raise RuntimeError(
+                    "model_sha256_mismatch "
+                    f"expected={expected_sha256} actual={actual_sha256}"
+                )
             logger = trt.Logger(trt.Logger.WARNING)
             runtime = trt.Runtime(logger)
             with open(self._model_path, "rb") as handle:
@@ -378,27 +432,47 @@ class YoloDetectorNode(Node):
             context = engine.create_execution_context()
             if context is None:
                 raise RuntimeError("create_execution_context returned None")
-            input_index = -1
-            output_index = -1
+            if bool(getattr(engine, "has_implicit_batch_dimension", False)):
+                raise RuntimeError("tensorrt_engine_must_use_explicit_batch")
+            bindings: list[TensorRTBinding] = []
             for index in range(engine.num_bindings):
-                if engine.binding_is_input(index):
-                    input_index = index
-                else:
-                    output_index = index
-            if input_index < 0 or output_index < 0:
-                raise RuntimeError("failed to resolve tensorrt bindings")
+                bindings.append(
+                    TensorRTBinding(
+                        index=index,
+                        name=str(engine.get_binding_name(index)),
+                        is_input=bool(engine.binding_is_input(index)),
+                        shape=tuple(int(value) for value in engine.get_binding_shape(index)),
+                        dtype=tensorrt_dtype_name(engine.get_binding_dtype(index)),
+                    )
+                )
+            contract = validate_tensorrt_yolov5_contract(
+                bindings,
+                input_width=self._input_width,
+                input_height=self._input_height,
+                class_count=self._expected_class_count,
+            )
             self._trt_module = trt
             self._torch_module = torch
             self._trt_runtime = runtime
             self._trt_engine = engine
             self._trt_context = context
-            self._trt_input_index = input_index
-            self._trt_output_index = output_index
+            self._trt_input_index = contract.input_index
+            self._trt_output_index = contract.output_index
             self._trt_device = torch.device("cuda:0" if "cuda" in self._device.lower() else self._device)
+            self._trt_contract = contract
+            self._model_sha256 = actual_sha256
             self._model = engine
             self._backend_ready = True
             self._backend_message = "backend ready"
-            self._publish_status("ok", f"loaded {self._model_path}")
+            self._publish_status(
+                "ok",
+                f"loaded {self._model_path}",
+                model_id=self._model_id,
+                model_sha256=self._model_sha256,
+                input_shape=list(contract.input_shape),
+                output_shape=list(contract.output_shape),
+                expected_class_count=self._expected_class_count,
+            )
         except Exception as exc:
             self._backend_message = f"failed to load TensorRT engine: {exc}"
             self._publish_status("error", self._backend_message)
@@ -568,7 +642,12 @@ class YoloDetectorNode(Node):
         ), inference_ms
 
     def _infer_tensorrt(self, frame: ImageFrame) -> tuple[list[dict[str, Any]], float]:
-        if self._trt_context is None or self._trt_engine is None or self._torch_module is None:
+        if (
+            self._trt_context is None
+            or self._trt_engine is None
+            or self._torch_module is None
+            or self._trt_contract is None
+        ):
             raise RuntimeError("tensorrt backend not initialized")
 
         padded, scale, (pad_x, pad_y) = letterbox(frame.bgr, self._input_width, self._input_height)
@@ -579,8 +658,13 @@ class YoloDetectorNode(Node):
         torch_module = self._torch_module
         device = self._trt_device
         input_tensor = torch_module.from_numpy(input_array).to(device=device)
-        self._trt_context.set_binding_shape(self._trt_input_index, tuple(input_tensor.shape))
+        if tuple(input_tensor.shape) != self._trt_contract.input_shape:
+            raise RuntimeError("runtime_input_shape_does_not_match_validated_tensorrt_contract")
+        if not self._trt_context.set_binding_shape(self._trt_input_index, tuple(input_tensor.shape)):
+            raise RuntimeError("TensorRT refused validated static input shape")
         output_shape = tuple(self._trt_context.get_binding_shape(self._trt_output_index))
+        if output_shape != self._trt_contract.output_shape:
+            raise RuntimeError("runtime_output_shape_does_not_match_validated_tensorrt_contract")
         output_dtype = trt_dtype_to_torch_dtype(
             self._trt_module,
             torch_module,
@@ -661,30 +745,58 @@ class YoloDetectorNode(Node):
         # All backends return their native detections first; this is the single,
         # backend-independent class gate before messages/debug images are published.
         detections = filter_detections_by_allowed_class_ids(detections, self._allowed_class_ids)
+        observed_detection_count = len(detections)
+        try:
+            detections, ambiguous_reason = gate_target_detections(
+                detections,
+                expected_max_targets=self._expected_max_targets,
+                duplicate_iou=self._duplicate_iou,
+            )
+        except ValueError as exc:
+            self._publish_status("error", f"invalid target gate configuration: {exc}")
+            return
+        auto_grasp_permitted = bool(detections) and ambiguous_reason is None
 
         payload = {
             "stamp_sec": frame.stamp_ns // 1_000_000_000,
             "stamp_nanosec": frame.stamp_ns % 1_000_000_000,
             "frame_id": frame.frame_id,
             "backend": self._backend_name,
+            "model_id": self._model_id,
             "model_path": self._model_path,
+            "model_sha256": self._model_sha256,
             "image_width": frame.width,
             "image_height": frame.height,
             "inference_ms": compact_float(inference_ms),
             "detection_count": len(detections),
+            "observed_detection_count": observed_detection_count,
             "allowed_class_ids": sorted(self._allowed_class_ids),
+            "expected_class_count": self._expected_class_count,
+            "expected_max_targets": self._expected_max_targets,
+            "auto_grasp_permitted": auto_grasp_permitted,
+            "ambiguous": ambiguous_reason is not None,
+            "rejection_reason": ambiguous_reason or "",
             "detections": detections,
         }
         msg = String()
         msg.data = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
         self._boxes_pub.publish(msg)
         self._publish_status(
-            "ok",
-            f"detections={len(detections)} inference_ms={inference_ms:.2f}",
+            "warn" if ambiguous_reason is not None else "ok",
+            (
+                f"ambiguous targets rejected: {ambiguous_reason}"
+                if ambiguous_reason is not None
+                else f"detections={len(detections)} inference_ms={inference_ms:.2f}"
+            ),
             frame_id=frame.frame_id,
             inference_ms=compact_float(inference_ms),
             detection_count=len(detections),
+            observed_detection_count=observed_detection_count,
             allowed_class_ids=sorted(self._allowed_class_ids),
+            expected_max_targets=self._expected_max_targets,
+            auto_grasp_permitted=auto_grasp_permitted,
+            ambiguous=ambiguous_reason is not None,
+            rejection_reason=ambiguous_reason or "",
         )
 
         if self._publish_debug_image:
