@@ -27,7 +27,7 @@ yolo_detector_node:
     model_id: ""
     expected_model_sha256: ""
     expected_class_count: 1
-    # The finals task has two pens.  More than two or duplicate overlapping boxes
-    # are held back from depth fusion and automatic grasp assignment.
-    expected_max_targets: 2
+    # Training accepts multi-instance images, but the confirmed competition runtime
+    # accepts one target only.  More than one is ambiguous and cannot be grasped.
+    expected_max_targets: 1
     duplicate_iou: 0.80

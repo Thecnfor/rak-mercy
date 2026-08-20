@@ -76,6 +76,7 @@ def test_launch_and_configs_preserve_default_and_provide_pen_profile() -> None:
     assert "class_names_json: '{\"0\":\"pen\"}'" in pen_defaults
     assert 'allowed_class_ids_json: "[0]"' in pen_defaults
     assert 'expected_class_count: 1' in pen_defaults
+    assert 'expected_max_targets: 1' in pen_defaults
     assert 'DeclareLaunchArgument("detector_expected_model_sha256", default_value="")' in launch
 
 
@@ -144,13 +145,13 @@ def test_node_enforces_identity_and_runtime_shape_contract() -> None:
     assert "runtime_output_shape_does_not_match_validated_tensorrt_contract" in content
 
 
-def test_two_pen_targets_receive_stable_ids_and_are_not_rejected() -> None:
+def test_two_pen_targets_receive_stable_ids_when_generic_profile_allows_them() -> None:
     detections, rejection = gate_target_detections(
         [
             {"class_id": 0, "confidence": 0.85, "bbox_xyxy": [340, 30, 450, 60]},
             {"class_id": 0, "confidence": 0.91, "bbox_xyxy": [20, 40, 120, 70]},
         ],
-        expected_max_targets=2,
+        expected_max_targets=0,
         duplicate_iou=0.8,
     )
     assert rejection is None
@@ -161,10 +162,10 @@ def test_two_pen_targets_receive_stable_ids_and_are_not_rejected() -> None:
     assert detections[0]["confidence"] == 0.91
 
 
-def test_more_than_two_or_duplicate_targets_fail_closed_for_grasping() -> None:
+def test_runtime_single_target_gate_rejects_multi_target_or_duplicate_boxes() -> None:
     many, many_reason = gate_target_detections(
-        [{"class_id": 0, "bbox_xyxy": [i * 40, 0, i * 40 + 20, 20]} for i in range(3)],
-        expected_max_targets=2,
+        [{"class_id": 0, "bbox_xyxy": [i * 40, 0, i * 40 + 20, 20]} for i in range(2)],
+        expected_max_targets=1,
         duplicate_iou=0.8,
     )
     duplicate, duplicate_reason = gate_target_detections(
@@ -172,8 +173,8 @@ def test_more_than_two_or_duplicate_targets_fail_closed_for_grasping() -> None:
             {"class_id": 0, "bbox_xyxy": [0, 0, 100, 30]},
             {"class_id": 0, "bbox_xyxy": [1, 0, 101, 30]},
         ],
-        expected_max_targets=2,
+        expected_max_targets=1,
         duplicate_iou=0.8,
     )
-    assert many == [] and many_reason == "target_count_exceeds_expected_max:3>2"
+    assert many == [] and many_reason == "ambiguous_multi_target"
     assert duplicate == [] and duplicate_reason == "severe_bbox_overlap_suspected_duplicate"

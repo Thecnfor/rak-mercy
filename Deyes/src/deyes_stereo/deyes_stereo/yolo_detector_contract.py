@@ -200,7 +200,7 @@ def gate_target_detections(
         ),
     )
     if expected_max_targets and len(ordered) > expected_max_targets:
-        return [], f"target_count_exceeds_expected_max:{len(ordered)}>{expected_max_targets}"
+        return [], "ambiguous_multi_target"
     for left_index, left in enumerate(ordered):
         for right in ordered[left_index + 1 :]:
             if _bbox_iou(left["bbox_xyxy"], right["bbox_xyxy"]) >= duplicate_iou:

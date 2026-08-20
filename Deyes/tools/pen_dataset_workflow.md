@@ -86,12 +86,12 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   detector_model_id:=pen_yolov5n_v1 \
   detector_expected_model_sha256:=<64-char-engine-sha256> \
   detector_expected_class_count:=1 \
-  detector_expected_max_targets:=2 \
+  detector_expected_max_targets:=1 \
   detector_image_topic:=/x1/stereo/debug/left_rect \
   enable_object_fusion:=true
 ```
 
-`/x1/detection/boxes` 中 1–2 个笔候选按从左到右稳定标记为 `target_00`、`target_01`。超过两个、IoU `>=0.80` 的疑似重复框、模型 SHA-256 不一致或 engine 输出不匹配时，节点会输出 `ambiguous` 并不给融合/自动抓取链候选。
+训练集允许每图有多个 `class0=pen` GT（当前双笔图保留为多实例正样本），但比赛运行按已确认场景只接受一个检测候选。`/x1/detection/boxes` 的单目标候选标记为 `target_00`；检测到多于一个 pen 时，节点输出 `ambiguous_multi_target`，不把任何候选交给融合/自动抓取链。IoU `>=0.80` 的疑似重复框、模型 SHA-256 不一致或 engine 输出不匹配同样 fail-closed。
 
 ## 4. 持出集评估与 3D 候选证据
 
