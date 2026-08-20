@@ -47,6 +47,8 @@ names: [pen]
 
 必须按**摆放批次**（而非随机逐帧）划分：建议 train/val/test = 70/15/15。一个批次的所有连续帧、相同背景及同一次摆放只能进入一个 split，否则验证指标会因泄漏而虚高。保留每张图的 session/batch 对应表，不要移动或改写原始 session。
 
+将仓库外 `temp/deyes/datasets/pen/dataset_inventory.json` 作为采集清单：每个 `batch_id` 记录 session 路径、图数、外观、姿态、摆放、标注状态和唯一 split。固定姿态/视场失败的 pilot 标为 `excluded`，不删原始证据；通过取景检查的双笔图可作为多实例正样本，标签仍统一为 `class0=pen`。
+
 ## 3. YOLOv5 训练、ONNX 与 TensorRT
 
 训练环境和模型文件也在仓库外，例如 `/home/elephant/temp/deyes/models/pen`。以已经安装的 YOLOv5 环境为例：
