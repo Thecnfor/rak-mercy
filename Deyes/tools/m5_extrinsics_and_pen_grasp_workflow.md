@@ -83,3 +83,16 @@ ros2 launch deyes_bringup pen_grasp.launch.py \
 ```
 
 未完成现场标定时仍可将两个路径保留为空做画面/深度 pilot；候选会显式标记 `trusted_for_grasp:false`，只能用于 camera-frame 调试。
+
+## 动态桌面平面不是抓取坐标系
+
+`ground_plane` 只消费 `/x1/stereo/depth` 和同 stamp、同尺寸、同 frame 的
+`/x1/stereo/left/camera_info_rect`；反投影只使用该校正 CameraInfo 的
+`P[0]`、`P[5]`、`P[2]`、`P[6]`。它输出相机相对的桌面法向、中心、距离、内点率、
+RMS/P95 残差与相邻帧法向变化，供桌面剔除和相对高度判断。
+
+动态平面绝不替代 `base_link_T_left_camera`：默认不发布 TF。若人工排障显式设置
+`ground_plane_publish_debug_tf:=true`，输出帧仍名为 `table_plane_dynamic_debug`，只可在
+RViz 调试，状态和数据都会标记 `dynamic_table_plane_camera_relative_only` 及
+`trusted_for_grasp:false`。法向突变时节点只发布 `degraded` 的旧平面回退，
+`valid_for_table_removal:false`；笔抓取节点将拒绝该帧。

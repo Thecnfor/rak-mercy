@@ -1,16 +1,12 @@
-# 地面/桌面坐标系节点默认参数。
-#
-# 该节点从深度图反投影出相机系点云，用 RANSAC 拟合最大水平平面（桌面/地面），
-# 建立 ground 坐标系并广播 ground <- camera 的 TF。
-# 相机俯仰可动时，每帧都从深度重新估计桌面平面，camera -> ground 变换自动更新。
+# 动态桌面平面默认参数。它只提供相机相对的桌面剔除/高度证据，
+# 不代表固定抓取世界坐标，也不能替代物理验证的 base_link 外参。
 ground_plane_node:
   ros__parameters:
     depth_topic: "/x1/stereo/depth"
-    camera_info_topic: "/x1/left_camera/camera_info"
+    camera_info_topic: "/x1/stereo/left/camera_info_rect"
     plane_topic: "/x1/ground/plane"
     status_topic: "/x1/ground/plane_status"
-    camera_frame: "left_camera_optical_frame"
-    ground_frame: "ground"
+    dynamic_plane_frame: "table_plane_dynamic_debug"
     publish_period_sec: 0.30
     min_depth_m: 0.20
     max_depth_m: 1.50
@@ -19,4 +15,9 @@ ground_plane_node:
     ransac_distance_threshold: 0.02
     ransac_iterations: 120
     min_inlier_ratio: 0.20
-    publish_tf: true
+    max_plane_residual_rms_m: 0.010
+    max_plane_residual_p95_m: 0.020
+    max_normal_delta_deg: 15.0
+    # Dynamic plane origins move with inliers. Keep TF disabled unless manually
+    # inspecting it; it is explicitly debug-only and never a grasp frame.
+    publish_debug_tf: false

@@ -273,16 +273,30 @@ def test_ground_plane_launch_and_defaults_exist() -> None:
 
     assert 'DeclareLaunchArgument("enable_ground_plane", default_value="false")' in launch_content
     assert 'DeclareLaunchArgument("ground_plane_config", default_value=ground_plane_params)' in launch_content
+    assert 'DeclareLaunchArgument("ground_plane_publish_debug_tf", default_value="false")' in launch_content
     assert 'executable="ground_plane"' in launch_content
 
-    assert 'ground_frame: "ground"' in config_content
+    assert 'dynamic_plane_frame: "table_plane_dynamic_debug"' in config_content
     assert 'depth_topic: "/x1/stereo/depth"' in config_content
+    assert 'camera_info_topic: "/x1/stereo/left/camera_info_rect"' in config_content
     assert 'ransac_distance_threshold: 0.02' in config_content
-    assert 'publish_tf: true' in config_content
+    assert 'publish_debug_tf: false' in config_content
 
     assert "ground_plane = deyes_stereo.ground_plane_node:main" in setup_content
     assert "class GroundPlaneNode(Node):" in node_content
-    assert "def fit_plane_ransac(" in node_content
-    assert "def build_ground_frame(" in node_content
+    assert "validate_rectified_depth_pair" in node_content
+    assert "project_rectified_depth_pixels" in node_content
+    assert "dynamic_table_plane_camera_relative_only" in node_content
+    assert "normal_discontinuity_fallback" in node_content
+    assert '"valid_for_table_removal": not degraded' in node_content
     assert "TransformBroadcaster" in node_content
     assert "sendTransform" in node_content
+
+
+def test_pen_grasp_requires_rectified_pair_and_fresh_plane_contract() -> None:
+    pen_node = (ROOT / "src" / "deyes_stereo" / "deyes_stereo" / "pen_grasp_node.py").read_text(encoding="utf-8")
+    assert 'camera_info_topic: "/x1/stereo/left/camera_info_rect"' in (ROOT / "config" / "stereo" / "pen_grasp.defaults.yaml").read_text(encoding="utf-8")
+    assert "validate_rectified_depth_pair" in pen_node
+    assert "validate_dynamic_plane_for_depth" in pen_node
+    assert "rectified_intrinsics(self._camera_info.p)" in pen_node
+    assert "self._camera_info.k" not in pen_node

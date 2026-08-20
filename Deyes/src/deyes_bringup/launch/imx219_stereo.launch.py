@@ -58,6 +58,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("object_fusion_target_frame", default_value="base_link"),
         DeclareLaunchArgument("enable_ground_plane", default_value="false"),
         DeclareLaunchArgument("ground_plane_config", default_value=ground_plane_params),
+        DeclareLaunchArgument("ground_plane_publish_debug_tf", default_value="false"),
         DeclareLaunchArgument("stereo_disparity_topic", default_value="/x1/stereo/disparity"),
         DeclareLaunchArgument("stereo_depth_topic", default_value="/x1/stereo/depth"),
         DeclareLaunchArgument(
@@ -342,6 +343,7 @@ def generate_launch_description() -> LaunchDescription:
             {
                 "depth_topic": LaunchConfiguration("stereo_depth_topic"),
                 "camera_info_topic": LaunchConfiguration("stereo_left_rect_camera_info_topic"),
+                "publish_debug_tf": LaunchConfiguration("ground_plane_publish_debug_tf"),
             },
         ],
     )

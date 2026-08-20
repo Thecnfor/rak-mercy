@@ -9,7 +9,7 @@ def _feature():
 
 
 def _plane():
-    return {"plane_normal": [0, 0, 1], "plane_center_camera_m": [0, 0, .50]}
+    return {"coordinate_contract": "dynamic_table_plane_camera_relative_only", "valid_for_table_removal": True, "degraded": False, "plane_normal": [0, 0, 1], "plane_center_camera_m": [0, 0, .50]}
 
 
 def test_pen_candidate_removes_table_and_withholds_untrusted_base_point():

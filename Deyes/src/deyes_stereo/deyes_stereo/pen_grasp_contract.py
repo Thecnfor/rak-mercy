@@ -111,6 +111,8 @@ def build_pen_candidate(
     points_camera = _project(sample_pixels, sample_depth, intrinsics)
     if not isinstance(plane_payload, dict):
         return {"valid": False, "trusted_for_grasp": False, "reason": "table_plane_missing", "target_id": feature["id"], "pen_id": feature["id"]}
+    if plane_payload.get("coordinate_contract") != "dynamic_table_plane_camera_relative_only" or plane_payload.get("valid_for_table_removal") is not True or plane_payload.get("degraded") is not False:
+        return {"valid": False, "trusted_for_grasp": False, "reason": "table_plane_not_fresh_camera_relative_evidence", "target_id": feature["id"], "pen_id": feature["id"]}
     try:
         normal = _point(plane_payload["plane_normal"], "plane_normal", 3)
         center = _point(plane_payload["plane_center_camera_m"], "plane_center_camera_m", 3)

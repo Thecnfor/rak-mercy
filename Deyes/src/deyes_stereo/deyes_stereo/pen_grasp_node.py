@@ -14,6 +14,11 @@ from std_msgs.msg import String
 
 from .depth_coordinate_node import depth_msg_to_array
 from .extrinsics_contract import ExtrinsicsValidation, load_yaml_document, validate_extrinsics
+from .ground_plane_contract import (
+    rectified_intrinsics,
+    validate_dynamic_plane_for_depth,
+    validate_rectified_depth_pair,
+)
 from .pen_grasp_contract import build_pen_candidates
 
 
@@ -38,6 +43,10 @@ class PenGraspNode(Node):
         self._plane: dict[str, Any] | None = None
         self._depth: np.ndarray | None = None
         self._depth_stamp_ns = 0
+        self._depth_frame_id = ""
+        self._depth_width = 0
+        self._depth_height = 0
+        self._depth_encoding = ""
         self._camera_info: CameraInfo | None = None
         self._last_stamp_ns = -1
         self._max_feature_age_ns = int(float(self.get_parameter("max_feature_age_sec").value) * 1e9)
@@ -81,6 +90,10 @@ class PenGraspNode(Node):
         try:
             self._depth = depth_msg_to_array(msg)
             self._depth_stamp_ns = _stamp_ns(msg)
+            self._depth_frame_id = str(msg.header.frame_id)
+            self._depth_width = int(msg.width)
+            self._depth_height = int(msg.height)
+            self._depth_encoding = str(msg.encoding)
         except RuntimeError as exc:
             self._status("warn", trusted_for_grasp=False, reason=str(exc))
 
@@ -95,13 +108,24 @@ class PenGraspNode(Node):
         if self._feature_stamp_ns and abs(self._feature_stamp_ns - self._depth_stamp_ns) > self._max_feature_age_ns:
             self._status("warn", trusted_for_grasp=False, reason="pen_feature_depth_timestamp_mismatch")
             return
-        k = self._camera_info.k
-        if len(k) < 9:
-            self._status("warn", trusted_for_grasp=False, reason="camera_info_invalid")
+        contract = validate_rectified_depth_pair(
+            depth_stamp_ns=self._depth_stamp_ns, depth_frame_id=self._depth_frame_id,
+            depth_width=self._depth_width, depth_height=self._depth_height, depth_encoding=self._depth_encoding,
+            info_stamp_ns=_stamp_ns(self._camera_info), info_frame_id=str(self._camera_info.header.frame_id),
+            info_width=int(self._camera_info.width), info_height=int(self._camera_info.height), projection=self._camera_info.p,
+        )
+        if not contract.valid:
+            self._status("warn", trusted_for_grasp=False, reason="rectified_depth_camera_info_contract:" + ",".join(contract.reasons))
+            return
+        plane_contract = validate_dynamic_plane_for_depth(
+            self._plane, depth_stamp_ns=self._depth_stamp_ns, depth_frame_id=self._depth_frame_id
+        )
+        if not plane_contract.valid:
+            self._status("warn", trusted_for_grasp=False, reason="table_plane_depth_contract:" + ",".join(plane_contract.reasons))
             return
         try:
             result = build_pen_candidates(
-                self._feature, self._depth, (float(k[0]), float(k[4]), float(k[2]), float(k[5])), plane_payload=self._plane,
+                self._feature, self._depth, rectified_intrinsics(self._camera_info.p), plane_payload=self._plane,
                 rotation=self._trust.rotation, translation=self._trust.translation, trusted_for_grasp=self._trust.valid,
                 min_depth_m=float(self.get_parameter("min_depth_m").value), max_depth_m=float(self.get_parameter("max_depth_m").value),
                 min_plane_clearance_m=float(self.get_parameter("min_plane_clearance_m").value), edge_margin_px=int(self.get_parameter("edge_margin_px").value),
