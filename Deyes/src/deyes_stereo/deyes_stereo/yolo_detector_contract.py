@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
@@ -38,6 +39,32 @@ def normalize_sha256(value: str) -> str:
     if not _SHA256_RE.fullmatch(normalized):
         raise ValueError("expected_model_sha256_must_be_a_64_character_lower_or_upper_hex_digest")
     return normalized
+
+
+def verify_model_sha256(path: str, expected_sha256: str = "") -> str:
+    """Hash a model and optionally enforce its configured identity.
+
+    An empty expected digest preserves generic detector behavior while still
+    publishing the observed digest.  A configured digest is always validated;
+    missing files and mismatches fail closed with stable errors.
+    """
+    model_path = str(path).strip()
+    if not model_path:
+        raise ValueError("model_path_must_not_be_empty")
+    digest = hashlib.sha256()
+    try:
+        with open(model_path, "rb") as handle:
+            for block in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(block)
+    except FileNotFoundError as exc:
+        raise ValueError("model_file_missing") from exc
+    actual = digest.hexdigest()
+    expected_text = str(expected_sha256).strip()
+    if expected_text:
+        expected = normalize_sha256(expected_text)
+        if actual != expected:
+            raise ValueError(f"model_sha256_mismatch expected={expected} actual={actual}")
+    return actual
 
 
 def normalize_tensorrt_dtype_name(value: Any) -> str:

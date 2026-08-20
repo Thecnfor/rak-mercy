@@ -16,6 +16,7 @@ from deyes_stereo.yolo_detector_contract import (  # noqa: E402
     parse_allowed_class_ids_json,
     TensorRTBinding,
     validate_tensorrt_yolov5_contract,
+    verify_model_sha256,
 )
 
 
@@ -128,6 +129,28 @@ def test_model_digest_is_mandatory_and_normalized() -> None:
             pass
         else:  # pragma: no cover
             raise AssertionError("invalid digest was accepted")
+
+
+def test_model_digest_verification_accepts_correct_rejects_wrong_and_missing(tmp_path) -> None:
+    model = tmp_path / "model.onnx"
+    model.write_bytes(b"fixture-model")
+    import hashlib
+
+    expected = hashlib.sha256(b"fixture-model").hexdigest()
+    assert verify_model_sha256(str(model), expected) == expected
+    assert verify_model_sha256(str(model), "") == expected
+    try:
+        verify_model_sha256(str(model), "0" * 64)
+    except ValueError as exc:
+        assert "model_sha256_mismatch" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("wrong model digest was accepted")
+    try:
+        verify_model_sha256(str(tmp_path / "missing.onnx"), expected)
+    except ValueError as exc:
+        assert str(exc) == "model_file_missing"
+    else:  # pragma: no cover
+        raise AssertionError("missing model was accepted")
 
 
 def test_tensorrt_dtype_aliases_match_python_enum_spellings() -> None:

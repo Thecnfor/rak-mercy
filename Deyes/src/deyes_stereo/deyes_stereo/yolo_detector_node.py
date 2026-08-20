@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import time
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -17,12 +16,12 @@ from std_msgs.msg import String
 from .yolo_detector_contract import (
     filter_detections_by_allowed_class_ids,
     gate_target_detections,
-    normalize_sha256,
     normalize_tensorrt_dtype_name,
     parse_allowed_class_ids_json,
     TensorRTBinding,
     TensorRTEngineContract,
     validate_tensorrt_yolov5_contract,
+    verify_model_sha256,
 )
 
 
@@ -183,14 +182,6 @@ def trt_dtype_to_torch_dtype(trt_module: Any, torch_module: Any, dtype: Any) -> 
     return mapping[dtype]
 
 
-def sha256_file(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
 class YoloDetectorNode(Node):
     def __init__(self) -> None:
         super().__init__("yolo_detector_node")
@@ -340,6 +331,9 @@ class YoloDetectorNode(Node):
             self._publish_status("error", self._backend_message)
             return
         try:
+            self._model_sha256 = verify_model_sha256(
+                self._model_path, self._expected_model_sha256
+            )
             self._model = YOLO(self._model_path)
             names = getattr(self._model, "names", None)
             if isinstance(names, dict):
@@ -350,13 +344,18 @@ class YoloDetectorNode(Node):
                         continue
             self._backend_ready = True
             self._backend_message = "backend ready"
-            self._publish_status("ok", f"loaded {self._model_path}")
+            self._publish_status(
+                "ok", f"loaded {self._model_path}", model_sha256=self._model_sha256
+            )
         except Exception as exc:
             self._backend_message = f"failed to load model: {exc}"
-            self._publish_status("error", self._backend_message)
+            self._publish_status("error", self._backend_message, model_sha256=self._model_sha256)
 
     def _load_opencv_dnn_backend(self) -> None:
         try:
+            self._model_sha256 = verify_model_sha256(
+                self._model_path, self._expected_model_sha256
+            )
             net = cv2.dnn.readNetFromONNX(self._model_path)
             # Prefer CUDA when this OpenCV build supports it; otherwise fall back to CPU.
             if hasattr(cv2.dnn, "DNN_BACKEND_CUDA") and "cuda" in self._device.lower():
@@ -372,10 +371,12 @@ class YoloDetectorNode(Node):
             self._model = net
             self._backend_ready = True
             self._backend_message = "backend ready"
-            self._publish_status("ok", f"loaded {self._model_path}")
+            self._publish_status(
+                "ok", f"loaded {self._model_path}", model_sha256=self._model_sha256
+            )
         except Exception as exc:
             self._backend_message = f"failed to load ONNX model: {exc}"
-            self._publish_status("error", self._backend_message)
+            self._publish_status("error", self._backend_message, model_sha256=self._model_sha256)
 
     def _load_tensorrt_backend(self) -> None:
         try:
@@ -403,18 +404,16 @@ class YoloDetectorNode(Node):
             self._publish_status("error", self._backend_message)
             return
         try:
-            expected_sha256 = normalize_sha256(self._expected_model_sha256)
+            if not self._expected_model_sha256.strip():
+                raise ValueError("expected_model_sha256_must_be_configured_for_tensorrt")
+            expected_sha256 = self._expected_model_sha256
         except ValueError as exc:
             self._backend_message = str(exc)
             self._publish_status("error", self._backend_message)
             return
         try:
-            actual_sha256 = sha256_file(self._model_path)
-            if actual_sha256 != expected_sha256:
-                raise RuntimeError(
-                    "model_sha256_mismatch "
-                    f"expected={expected_sha256} actual={actual_sha256}"
-                )
+            # verify_model_sha256 raises model_sha256_mismatch and fails closed.
+            actual_sha256 = verify_model_sha256(self._model_path, expected_sha256)
             logger = trt.Logger(trt.Logger.WARNING)
             runtime = trt.Runtime(logger)
             with open(self._model_path, "rb") as handle:
