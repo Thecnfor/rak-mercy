@@ -152,7 +152,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             )}
             if args.rviz_check_file:
                 try:
-                    import json
                     with Path(args.rviz_check_file).open("r", encoding="utf-8") as handle:
                         supplied = json.load(handle)
                     if isinstance(supplied, dict):
