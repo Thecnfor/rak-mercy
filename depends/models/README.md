@@ -12,7 +12,7 @@
 在目标机上，使用仓库根目录的 `remote_build_yolo_engine.py`。连接信息通过运维环境变量传入，禁止在命令或脚本中保存密码：
 
 ```bash
-export ROBOT_IP=192.168.166.121
+export ROBOT_IP=192.168.255.121
 export ROBOT_USER=elephant
 python remote_build_yolo_engine.py \
   --host "$ROBOT_IP" \

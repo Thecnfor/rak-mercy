@@ -7,7 +7,8 @@ import math
 from typing import Any, Iterable, Sequence
 
 
-BOARD_INNER_CORNERS = (9, 6)
+DEFAULT_BOARD_INNER_CORNERS = (8, 7)
+MIN_BOARD_INNER_CORNERS = 4
 CALIBRATION_SIZE = (640, 360)
 MIN_SAMPLES = 40
 MAX_SAMPLES = 60
@@ -22,12 +23,33 @@ class CalibrationGate:
     reasons: tuple[str, ...]
 
 
+def normalize_board_inner_corners(value: Sequence[Any]) -> tuple[int, int] | None:
+    """Accept only an explicitly recorded, physically plausible inner-corner grid."""
+    if isinstance(value, (str, bytes)):
+        return None
+    try:
+        if len(value) != 2:
+            return None
+        columns, rows = (int(value[0]), int(value[1]))
+    except (TypeError, ValueError, OverflowError, IndexError):
+        return None
+    try:
+        if any(isinstance(item, bool) or float(item) != integer for item, integer in zip(value, (columns, rows))):
+            return None
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if columns < MIN_BOARD_INNER_CORNERS or rows < MIN_BOARD_INNER_CORNERS:
+        return None
+    return columns, rows
+
+
 def validate_capture_arguments(
     *,
     square_size_m: float,
     requested_samples: int,
     width: int,
     height: int,
+    board_inner_corners: Sequence[Any],
 ) -> tuple[str, ...]:
     """Return human-readable preflight failures without guessing physical data."""
     reasons: list[str] = []
@@ -37,6 +59,8 @@ def validate_capture_arguments(
         reasons.append("requested_samples_must_be_between_40_and_60")
     if (width, height) != CALIBRATION_SIZE:
         reasons.append("resolution_must_be_exactly_640x360")
+    if normalize_board_inner_corners(board_inner_corners) is None:
+        reasons.append("board_inner_corners_must_be_explicit_integers_at_least_4x4")
     return tuple(reasons)
 
 
@@ -51,6 +75,8 @@ def validation_gate(
     baseline_sign_confirmed: bool,
     scale_confirmed: bool,
     coverage_complete: bool,
+    board_inner_corners: Sequence[Any],
+    square_size_m: float | None,
 ) -> CalibrationGate:
     """Centralized, deliberately conservative rule for a trusted YAML."""
     reasons: list[str] = []
@@ -60,9 +86,13 @@ def validation_gate(
         reasons.append("resolution_not_640x360")
     if source != "physical_checkerboard":
         reasons.append("source_is_not_physical_checkerboard")
-    if reproj_rms_px is None or reproj_rms_px > MAX_REPROJ_RMS_PX:
+    if normalize_board_inner_corners(board_inner_corners) is None:
+        reasons.append("board_inner_corners_must_be_explicit_integers_at_least_4x4")
+    if square_size_m is None or not math.isfinite(square_size_m) or square_size_m <= 0.0:
+        reasons.append("square_size_m_must_be_explicit_and_positive")
+    if reproj_rms_px is None or not math.isfinite(reproj_rms_px) or reproj_rms_px > MAX_REPROJ_RMS_PX:
         reasons.append("reproj_rms_exceeds_0_50_px")
-    if epipolar_p95_px is None or epipolar_p95_px > MAX_EPIPOLAR_P95_PX:
+    if epipolar_p95_px is None or not math.isfinite(epipolar_p95_px) or epipolar_p95_px > MAX_EPIPOLAR_P95_PX:
         reasons.append("epipolar_p95_exceeds_0_50_px")
     if not coverage_complete:
         reasons.append("capture_coverage_incomplete")

@@ -8,7 +8,7 @@ case "${MODE}" in
   *) echo "usage: $0 [--dry-run|--prepare|--deploy]" >&2; exit 64 ;;
 esac
 
-: "${ROBOT_IP:?Set ROBOT_IP outside this repository (for example 192.168.166.121).}"
+: "${ROBOT_IP:?Set ROBOT_IP outside this repository for the current robot.}"
 : "${ROBOT_USER:?Set ROBOT_USER outside this repository.}"
 : "${REMOTE_WORKSPACE:?Set REMOTE_WORKSPACE outside this repository (for example /home/robot/deyes_ws).}"
 

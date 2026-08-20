@@ -1,4 +1,4 @@
-"""ROS-topic-only 9x6 checkerboard stereo calibration.
+"""ROS-topic-only physical checkerboard stereo calibration.
 
 This command intentionally writes captures and candidate results outside the source
 tree.  It never synthesizes a physical calibration: a candidate can become
@@ -24,25 +24,27 @@ import yaml
 
 try:  # Supports `ros2 run` and direct operator diagnostics alike.
     from .stereo_calibration_contract import (
-        BOARD_INNER_CORNERS,
+        DEFAULT_BOARD_INNER_CORNERS,
         CALIBRATION_SIZE,
         MAX_PAIR_SKEW_MS,
         MAX_SAMPLES,
         MIN_SAMPLES,
         coverage_cells,
         coverage_complete,
+        normalize_board_inner_corners,
         validate_capture_arguments,
         validation_gate,
     )
 except ImportError:  # pragma: no cover - only used for direct script execution.
     from stereo_calibration_contract import (  # type: ignore
-        BOARD_INNER_CORNERS,
+        DEFAULT_BOARD_INNER_CORNERS,
         CALIBRATION_SIZE,
         MAX_PAIR_SKEW_MS,
         MAX_SAMPLES,
         MIN_SAMPLES,
         coverage_cells,
         coverage_complete,
+        normalize_board_inner_corners,
         validate_capture_arguments,
         validation_gate,
     )
@@ -71,9 +73,9 @@ def image_to_gray(message: Any) -> np.ndarray:
     raise ValueError(f"unsupported_image_encoding:{message.encoding}")
 
 
-def find_corners(gray: np.ndarray) -> Optional[np.ndarray]:
+def find_corners(gray: np.ndarray, board_inner_corners: tuple[int, int]) -> Optional[np.ndarray]:
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
-    found, corners = cv2.findChessboardCornersSB(gray, BOARD_INNER_CORNERS, flags)
+    found, corners = cv2.findChessboardCornersSB(gray, board_inner_corners, flags)
     if not found:
         return None
     return corners.reshape(-1, 2).astype(np.float32)
@@ -96,9 +98,9 @@ def is_duplicate_pose(candidate: np.ndarray, previous: Sequence[np.ndarray]) -> 
     return any(float(np.linalg.norm(candidate - item)) < 0.035 for item in previous)
 
 
-def object_points(square_size_m: float, count: int) -> list[np.ndarray]:
-    grid = np.zeros((BOARD_INNER_CORNERS[0] * BOARD_INNER_CORNERS[1], 3), np.float32)
-    grid[:, :2] = np.mgrid[0 : BOARD_INNER_CORNERS[0], 0 : BOARD_INNER_CORNERS[1]].T.reshape(-1, 2)
+def object_points(square_size_m: float, count: int, board_inner_corners: tuple[int, int]) -> list[np.ndarray]:
+    grid = np.zeros((board_inner_corners[0] * board_inner_corners[1], 3), np.float32)
+    grid[:, :2] = np.mgrid[0 : board_inner_corners[0], 0 : board_inner_corners[1]].T.reshape(-1, 2)
     grid *= float(square_size_m)
     return [grid.copy() for _ in range(count)]
 
@@ -117,9 +119,10 @@ def rectified_epipolar_errors(
 
 def solve_stereo(
     left_points: Sequence[np.ndarray], right_points: Sequence[np.ndarray], square_size_m: float,
+    board_inner_corners: tuple[int, int],
 ) -> dict[str, Any]:
     size = CALIBRATION_SIZE
-    object_pts = object_points(square_size_m, len(left_points))
+    object_pts = object_points(square_size_m, len(left_points), board_inner_corners)
     calibration_flags = cv2.CALIB_RATIONAL_MODEL
     _, k1, d1, _, _ = cv2.calibrateCamera(object_pts, list(left_points), size, None, None, flags=calibration_flags)
     _, k2, d2, _, _ = cv2.calibrateCamera(object_pts, list(right_points), size, None, None, flags=calibration_flags)
@@ -171,6 +174,9 @@ class TopicCapture:
         from sensor_msgs.msg import Image
 
         self.args = args
+        self.board_inner_corners = normalize_board_inner_corners((args.board_cols, args.board_rows))
+        if self.board_inner_corners is None:
+            raise ValueError("board_inner_corners_must_be_explicit_integers_at_least_4x4")
         self.rclpy = rclpy
         self.node: Node = rclpy.create_node("physical_stereo_calibration_capture")
         self.left_queue: Deque[Any] = deque(maxlen=8)
@@ -223,7 +229,8 @@ class TopicCapture:
         if min(left_blur, right_blur) < self.args.min_blur_score:
             self.rejects["motion_blur"] += 1
             return
-        left_corners, right_corners = find_corners(left_gray), find_corners(right_gray)
+        left_corners = find_corners(left_gray, self.board_inner_corners)
+        right_corners = find_corners(right_gray, self.board_inner_corners)
         if left_corners is None or right_corners is None:
             self.rejects["checkerboard_not_found"] += 1
             return
@@ -245,6 +252,7 @@ class TopicCapture:
             "left_stamp_ns": stamp_ns(left_message), "right_stamp_ns": stamp_ns(right_message),
             "pair_skew_ms": skew_ms, "left_blur_score": left_blur, "right_blur_score": right_blur,
             "left_board_centre_px": [float(centre[0]), float(centre[1])],
+            "board_inner_corners": list(self.board_inner_corners),
         })
         self.node.get_logger().info(
             f"accepted {len(self.samples)}/{self.args.samples}; skew_ms={skew_ms:.3f}; coverage={len(self.cells)}/9"
@@ -254,7 +262,7 @@ class TopicCapture:
 
     def manifest(self) -> dict[str, Any]:
         return {
-            "schema_version": 1, "source": "ros_topics", "board_inner_corners": list(BOARD_INNER_CORNERS),
+            "schema_version": 2, "source": "ros_topics", "board_inner_corners": list(self.board_inner_corners),
             "square_size_m": self.args.square_size_m, "resolution": list(CALIBRATION_SIZE),
             "left_topic": self.args.left_topic, "right_topic": self.args.right_topic,
             "max_pair_skew_ms": MAX_PAIR_SKEW_MS, "min_blur_score": self.args.min_blur_score,
@@ -277,7 +285,8 @@ class TopicCapture:
 
 def command_capture(args: argparse.Namespace) -> int:
     errors = validate_capture_arguments(
-        square_size_m=args.square_size_m, requested_samples=args.samples, width=args.width, height=args.height
+        square_size_m=args.square_size_m, requested_samples=args.samples, width=args.width, height=args.height,
+        board_inner_corners=(args.board_cols, args.board_rows),
     )
     if errors:
         raise ValueError(", ".join(errors))
@@ -295,17 +304,22 @@ def command_capture(args: argparse.Namespace) -> int:
     return 0 if len(capture.samples) >= MIN_SAMPLES else 2
 
 
-def load_observations(session_dir: Path, manifest: dict[str, Any]) -> tuple[list[np.ndarray], list[np.ndarray]]:
+def load_observations(
+    session_dir: Path, manifest: dict[str, Any], board_inner_corners: tuple[int, int],
+) -> tuple[list[np.ndarray], list[np.ndarray]]:
     left_points: list[np.ndarray] = []
     right_points: list[np.ndarray] = []
     for sample in manifest["samples"]:
+        if tuple(sample.get("board_inner_corners", ())) != board_inner_corners:
+            raise ValueError("sample_board_does_not_match_capture_session_board")
         if float(sample["pair_skew_ms"]) > MAX_PAIR_SKEW_MS:
             continue
         left = cv2.imread(str(session_dir / sample["left"]), cv2.IMREAD_GRAYSCALE)
         right = cv2.imread(str(session_dir / sample["right"]), cv2.IMREAD_GRAYSCALE)
         if left is None or right is None:
             continue
-        left_corners, right_corners = find_corners(left), find_corners(right)
+        left_corners = find_corners(left, board_inner_corners)
+        right_corners = find_corners(right, board_inner_corners)
         if left_corners is not None and right_corners is not None:
             left_points.append(left_corners)
             right_points.append(right_corners)
@@ -316,8 +330,10 @@ def markdown_report(report: dict[str, Any]) -> str:
     gate = report["validation"]
     reasons = gate["reasons"] or ["all_validation_gates_passed"]
     return "\n".join([
-        "# 9x6 物理双目标定报告", "", f"- 候选 ID：`{report['calibration_id']}`",
+        f"# {report['board_inner_corners'][0]}x{report['board_inner_corners'][1]} 物理双目标定报告", "", f"- 候选 ID：`{report['calibration_id']}`",
         f"- 结果：`validated={gate['validated']}`", f"- 分辨率：`{report['resolution'][0]}x{report['resolution'][1]}`",
+        f"- 棋盘内角点：`{report['board_inner_corners'][0]}x{report['board_inner_corners'][1]}`",
+        f"- 实测格长：`{report['square_size_m']:.6f} m`",
         f"- 有效样本：`{report['valid_sample_count']}`", f"- 重投影 RMS：`{report['reproj_rms_px']:.4f} px`",
         f"- 校正后垂直极线 P95：`{report['epipolar_p95_px']:.4f} px`", "", "## 验证原因", *[f"- {reason}" for reason in reasons], "",
         "## 采集拒绝统计", *[f"- {key}: {value}" for key, value in report["reject_counts"].items()], "",
@@ -330,31 +346,38 @@ def command_compute(args: argparse.Namespace) -> int:
     manifest = json.loads((session_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
     if manifest.get("source") != "ros_topics" or manifest.get("left_topic") != LEFT_TOPIC or manifest.get("right_topic") != RIGHT_TOPIC:
         raise ValueError("manifest_is_not_a_formal_ros_topic_capture")
-    if tuple(manifest.get("board_inner_corners", ())) != BOARD_INNER_CORNERS:
-        raise ValueError("manifest_board_is_not_9x6")
+    board_inner_corners = normalize_board_inner_corners((args.board_cols, args.board_rows))
+    if board_inner_corners is None:
+        raise ValueError("board_inner_corners_must_be_explicit_integers_at_least_4x4")
+    if tuple(manifest.get("board_inner_corners", ())) != board_inner_corners:
+        raise ValueError("compute_board_does_not_match_capture_session")
     square_size_m = float(manifest.get("square_size_m", 0.0))
+    if not math.isclose(square_size_m, float(args.square_size_m), rel_tol=0.0, abs_tol=1e-12):
+        raise ValueError("compute_square_size_does_not_match_capture_session")
     preflight = validate_capture_arguments(
         square_size_m=square_size_m, requested_samples=len(manifest.get("samples", [])),
         width=int(manifest["resolution"][0]), height=int(manifest["resolution"][1]),
+        board_inner_corners=board_inner_corners,
     )
     if preflight:
         raise ValueError(", ".join(preflight))
-    left_points, right_points = load_observations(session_dir, manifest)
+    left_points, right_points = load_observations(session_dir, manifest, board_inner_corners)
     if not MIN_SAMPLES <= len(left_points) <= MAX_SAMPLES:
         raise ValueError("rechecked_valid_samples_not_in_40_to_60")
-    solved = solve_stereo(left_points, right_points, square_size_m)
+    solved = solve_stereo(left_points, right_points, square_size_m, board_inner_corners)
     cells = {tuple(cell) for cell in manifest.get("coverage_cells", [])}
     gate = validation_gate(
         sample_count=len(left_points), resolution=manifest["resolution"], reproj_rms_px=solved["reproj_rms_px"],
         epipolar_p95_px=solved["epipolar_p95_px"], source="physical_checkerboard",
         left_right_confirmed=args.confirm_left_right, baseline_sign_confirmed=args.confirm_baseline_sign,
         scale_confirmed=args.confirm_scale, coverage_complete=coverage_complete(cells),
+        board_inner_corners=board_inner_corners, square_size_m=square_size_m,
     )
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     calibration_id = f"{args.robot_id}-{args.camera_pair_id}-640x360-{timestamp}"
     candidate: dict[str, Any] = {
         "calibration_id": calibration_id, "robot_id": args.robot_id, "camera_pair_id": args.camera_pair_id,
-        "img_size": list(CALIBRATION_SIZE), "board_inner_corners": list(BOARD_INNER_CORNERS),
+        "img_size": list(CALIBRATION_SIZE), "board_inner_corners": list(board_inner_corners),
         "square_size_m": square_size_m, "reproj_rms_px": solved["reproj_rms_px"],
         "epipolar_p95_px": solved["epipolar_p95_px"], "date": timestamp, "source": "physical_checkerboard",
         "validated": gate.validated, "validation_reasons": list(gate.reasons),
@@ -364,6 +387,7 @@ def command_compute(args: argparse.Namespace) -> int:
     candidate.update({key: matrix_list(solved[key]) for key in ("K1", "D1", "K2", "D2", "R", "T", "P1", "P2", "Q")})
     report = {
         "calibration_id": calibration_id, "source": "physical_checkerboard", "resolution": list(CALIBRATION_SIZE),
+        "board_inner_corners": list(board_inner_corners), "square_size_m": square_size_m,
         "valid_sample_count": len(left_points), "captured_sample_count": len(manifest["samples"]),
         "reproj_rms_px": solved["reproj_rms_px"], "epipolar_p95_px": solved["epipolar_p95_px"],
         "epipolar_sample_count": solved["epipolar_samples"], "coverage_cells": sorted([list(cell) for cell in cells]),
@@ -388,6 +412,8 @@ def parser() -> argparse.ArgumentParser:
     capture = commands.add_parser("capture", help="capture 40-60 real ROS topic stereo pairs")
     capture.add_argument("--session-dir", required=True, help="outside-repository output directory")
     capture.add_argument("--square-size-m", required=True, type=float, help="caliper-measured square edge in metres")
+    capture.add_argument("--board-cols", type=int, default=DEFAULT_BOARD_INNER_CORNERS[0], help="physical checkerboard inner-corner columns (official board: 8)")
+    capture.add_argument("--board-rows", type=int, default=DEFAULT_BOARD_INNER_CORNERS[1], help="physical checkerboard inner-corner rows (official board: 7)")
     capture.add_argument("--samples", type=int, default=50, help="accepted samples; 40..60")
     capture.add_argument("--width", type=int, default=640)
     capture.add_argument("--height", type=int, default=360)
@@ -398,6 +424,9 @@ def parser() -> argparse.ArgumentParser:
     compute.add_argument("--session-dir", required=True)
     compute.add_argument("--robot-id", required=True)
     compute.add_argument("--camera-pair-id", required=True)
+    compute.add_argument("--square-size-m", required=True, type=float, help="must exactly match the capture manifest")
+    compute.add_argument("--board-cols", type=int, default=DEFAULT_BOARD_INNER_CORNERS[0], help="must match the capture manifest (official board: 8)")
+    compute.add_argument("--board-rows", type=int, default=DEFAULT_BOARD_INNER_CORNERS[1], help="must match the capture manifest (official board: 7)")
     compute.add_argument("--confirm-left-right", action="store_true")
     compute.add_argument("--confirm-baseline-sign", action="store_true")
     compute.add_argument("--confirm-scale", action="store_true")

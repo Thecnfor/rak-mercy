@@ -37,7 +37,7 @@ def test_spec_calibration_is_explicitly_unvalidated() -> None:
         "robot_id:",
         "camera_pair_id:",
         "img_size:",
-        "board_inner_corners: [9, 6]",
+        "board_inner_corners: [8, 7]",
         "square_size_m:",
         "reproj_rms_px:",
         "epipolar_p95_px:",
@@ -69,6 +69,15 @@ def test_cuda_geometry_uses_rectified_camera_info_not_raw_camera_info() -> None:
     assert "k->at<double>(1, 1) *= scale_y" in content
     assert "left_camera_info_topic" not in content
     assert "right_camera_info_topic" not in content
+
+
+def test_cuda_accepts_recorded_physical_board_shapes_not_a_9x6_literal() -> None:
+    content = CUDA_NODE_PATH.read_text(encoding="utf-8")
+    assert "only the physical 9x6 checkerboard" not in content
+    assert "value < 4.0" in content
+    assert "std::floor(value) != value" in content
+    assert "validated stereo calibration measurement gates are not satisfied" in content
+    assert "validated stereo calibration resolution must be 640x360" in content
 
 
 def test_capture_does_not_rewrite_pair_stamps_to_a_midpoint() -> None:

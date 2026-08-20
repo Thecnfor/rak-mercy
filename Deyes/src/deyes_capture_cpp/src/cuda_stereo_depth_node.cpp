@@ -336,10 +336,18 @@ StereoCalibration CudaStereoDepthNode::load_stereo_calibration(const std::string
     throw std::runtime_error("stereo calibration missing required metadata key: validated");
   }
   const auto board_inner_corners = parse_flat_array<2>(root["board_inner_corners"]);
-  if (board_inner_corners[0] != 9.0 || board_inner_corners[1] != 6.0) {
-    throw std::runtime_error("only the physical 9x6 checkerboard calibration contract is accepted");
+  for (const double value : board_inner_corners) {
+    if (!std::isfinite(value) || value < 4.0 || std::floor(value) != value) {
+      throw std::runtime_error(
+              "stereo calibration board_inner_corners must contain explicit integer dimensions at least 4x4");
+    }
   }
   const auto img_size = parse_flat_array<2>(root["img_size"]);
+  for (const double value : img_size) {
+    if (!std::isfinite(value) || value < 1.0 || std::floor(value) != value) {
+      throw std::runtime_error("stereo calibration img_size must contain positive integer dimensions");
+    }
+  }
   const auto d1_values = parse_vector(root["D1"]);
   const auto d2_values = parse_vector(root["D2"]);
   const auto t_values = parse_vector(root["T"]);
@@ -366,6 +374,21 @@ StereoCalibration CudaStereoDepthNode::load_stereo_calibration(const std::string
     }
     if (root["square_size_m"].IsNull() || root["reproj_rms_px"].IsNull() || root["epipolar_p95_px"].IsNull()) {
       throw std::runtime_error("validated stereo calibration requires measured board and error metadata");
+    }
+    if (calibration.calibration_id.empty() || calibration.robot_id.empty() || calibration.camera_pair_id.empty()) {
+      throw std::runtime_error("validated stereo calibration requires non-empty identity metadata");
+    }
+    const double square_size_m = root["square_size_m"].as<double>();
+    const double reproj_rms_px = root["reproj_rms_px"].as<double>();
+    const double epipolar_p95_px = root["epipolar_p95_px"].as<double>();
+    if (!std::isfinite(square_size_m) || square_size_m <= 0.0 ||
+      !std::isfinite(reproj_rms_px) || reproj_rms_px > 0.50 ||
+      !std::isfinite(epipolar_p95_px) || epipolar_p95_px > 0.50)
+    {
+      throw std::runtime_error("validated stereo calibration measurement gates are not satisfied");
+    }
+    if (calibration.image_size.width != 640 || calibration.image_size.height != 360) {
+      throw std::runtime_error("validated stereo calibration resolution must be 640x360");
     }
   }
   return calibration;

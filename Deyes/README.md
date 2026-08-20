@@ -111,7 +111,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   calib_path:=/path/to/your/stereo_calib.yaml
 ```
 
-M1 收敛回归推荐命令（先在 shell 外设置 `ROBOT_IP=192.168.166.121`）：
+M1 收敛回归推荐命令（先在 shell 外设置当前机器人的 `ROBOT_IP`）：
 
 ```bash
 ros2 launch deyes_bringup imx219_stereo.launch.py \
@@ -324,7 +324,7 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 ## YOLO + 深度坐标探测
 
 - 目标：在双目主链稳定输出深度后，引入目标检测，实现 `2D 检测 + 深度融合 + base_link 坐标输出`。
-- 历史实测机：`192.168.137.17`（Jetson Xavier NX，JetPack R35.3.1）。这不是当前部署目标；当前机器人地址只通过 shell 环境变量 `ROBOT_IP=192.168.166.121` 注入。
+- 历史实测机：`192.168.137.17`（Jetson Xavier NX，JetPack R35.3.1）。这不是当前部署目标；当前机器人地址只通过 shell 环境变量 `ROBOT_IP` 注入。
 
 ### 节点拆分
 
@@ -439,7 +439,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
 
 ## M2 物理标定
 
-- 本轮目标：在 `ROBOT_IP=192.168.166.121` 的实机上按 `checkerboard 9x6 + 640x360@30` 执行物理双目标定。
+- 本轮目标：通过外部 `ROBOT_IP` 注入的实机按 `checkerboard 8x7 inner corners + 0.020m + 640x360@30` 执行物理双目标定。
 - 执行前提：
   - 相机支架固定，不再重装。
   - `640x360@30` 下主链预热后进入 `publish_hz≈30`，且 `drop_skew` 不持续增长。
@@ -447,7 +447,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
   - 机器人标识与双目对标识可用于 YAML 命名。
 - 当前执行路径：
   - 远端 `deyes_stereo physical_stereo_calibration` 使用**棋盘格** `capture/compute` 流程。
-  - 现场应使用 `inner corners: 9 x 6`、`print at 100% scale` 的棋盘格标定板，并记录单格边长。
+  - 现场应使用 `inner corners: 8 x 7`（约 `9x8` 方格）、`print at 100% scale` 的棋盘格标定板，并显式记录 `0.020 m` 单格边长。
 - 停止条件：
   - `640x360@30` 下主链无法满足标定采集前提。
   - 现场无法确认机器人标识、双目对标识或板尺寸。

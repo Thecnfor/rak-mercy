@@ -10,9 +10,9 @@
 
 本轮 `M2+M3` 约定：
 
-- 目标主机：`192.168.166.121`（通过环境变量 `ROBOT_IP` 使用，不写入 ROS 参数或标定 YAML）
+- 目标主机：仅通过外部环境变量 `ROBOT_IP` 注入，不写入 ROS 参数或标定 YAML
 - 目标分辨率：`640x360@30`
-- 目标板型：`checkerboard 9x6`
+- 目标板型：`checkerboard 8x7` 内角点（约 `9x8` 方格），实测单格边长 `0.020 m`
 - 若执行现场无法确认 `robot_id` 或 `camera_serial_or_sensorpair`，则禁止把 YAML 提交到本目录。
 
 建议命名形式：
@@ -38,7 +38,7 @@ elephant_imx219stereo_640x360_20260820.yaml
 
 本轮复用 `mercury_grasp/calibrate_stereo.py` 的棋盘格流程时，执行前必须确认：
 
-- 标定板内角点规格为 `9 x 6`
+- 标定板内角点规格为 `8 x 7`
 - 打印比例为 `100%`
 - 单个方格边长已经实测并记录到报告
 
@@ -49,7 +49,7 @@ elephant_imx219stereo_640x360_20260820.yaml
 ## 校准契约（深度真源）
 
 所有供 `cuda_stereo_depth_node` 使用的 YAML 必须含有 `calibration_id`、`robot_id`、
-`camera_pair_id`、`img_size`、`board_inner_corners: [9, 6]`、`square_size_m`、
+`camera_pair_id`、`img_size`、明确记录的 `board_inner_corners`（本轮 `[8, 7]`）、`square_size_m`、
 `reproj_rms_px`、`epipolar_p95_px`、`date`、`source` 与 `validated`。物理标定前上述测量
 字段必须保留为 `null`，且 `validated: false`；不得填入推导或猜测的误差数值。只有
 `source: physical_checkerboard` 的实测 YAML 才可以设置 `validated: true`。
