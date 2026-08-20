@@ -34,6 +34,22 @@ class NavigationPose:
 
 
 @dataclass(frozen=True)
+class YellowWorkZone:
+    """Explicit map-frame box in which a loaded base may reposition.
+
+    This is deliberately site supplied.  The transport contract never embeds
+    competition coordinates in generic code.
+    """
+
+    zone_id: str
+    frame_id: str
+    min_x_m: float
+    max_x_m: float
+    min_y_m: float
+    max_y_m: float
+
+
+@dataclass(frozen=True)
 class SimulationWorldBinding:
     """Evidence binding a plan to one generated Isaac scene instance."""
 
@@ -62,14 +78,18 @@ class DualPenTransportProfile:
     retreat_offset_m: float = 0.12
     phase_timeout_sec: float = 5.0
     navigation_timeout_sec: float = 45.0
-    turn_timeout_sec: float = 30.0
-    turn_settling_margin_sec: float = 2.0
+    # Loaded base motion is simulation-only.  Its timeout is checked against
+    # both translational and yaw travel; it is not a permissive fixed delay.
+    loaded_transport_timeout_sec: float = 30.0
+    loaded_transport_settling_margin_sec: float = 2.0
+    loaded_transport_feedback_deadman_sec: float = 0.20
     max_barrier_skew_sec: float = 0.10
     translation_x_tolerance_m: float = 0.02
     translation_y_tolerance_m: float = 0.02
-    max_turn_angular_z_rad_s: float = 0.10
-    turn_yaw_tolerance_rad: float = 0.03490658503988659
-    turn_zero_confirmation_count: int = 5
+    max_loaded_linear_mps: float = 0.05
+    max_loaded_angular_z_rad_s: float = 0.10
+    loaded_yaw_tolerance_rad: float = 0.03490658503988659
+    loaded_zero_confirmation_count: int = 5
     lift_vector_base_unit: tuple[float, float, float] | None = None
 
 
@@ -206,38 +226,75 @@ def _validate_pose(pose: NavigationPose, expected_id: str) -> str | None:
     return None
 
 
+def _validate_yellow_work_zone(zone: YellowWorkZone | None) -> dict[str, Any]:
+    if zone is None:
+        return {"valid": False, "reason": "yellow_work_zone_required", "reasons": ["yellow_work_zone_required"]}
+    reasons: list[str] = []
+    if not zone.zone_id.strip():
+        reasons.append("yellow_work_zone_id_missing")
+    if zone.frame_id != "map":
+        reasons.append("yellow_work_zone_frame_must_be_map")
+    values = (zone.min_x_m, zone.max_x_m, zone.min_y_m, zone.max_y_m)
+    if not all(isfinite(float(value)) for value in values):
+        reasons.append("yellow_work_zone_must_be_finite")
+    elif zone.min_x_m >= zone.max_x_m or zone.min_y_m >= zone.max_y_m:
+        reasons.append("yellow_work_zone_bbox_invalid")
+    return {
+        "valid": not reasons,
+        "reason": "ok" if not reasons else reasons[0],
+        "reasons": reasons,
+        "zone_id": zone.zone_id,
+        "frame_id": zone.frame_id,
+        "bbox_m": {"min_x_m": zone.min_x_m, "max_x_m": zone.max_x_m, "min_y_m": zone.min_y_m, "max_y_m": zone.max_y_m},
+    }
+
+
+def _pose_inside_zone(pose: NavigationPose, zone: YellowWorkZone) -> bool:
+    # A line segment between two points in this convex box also remains inside.
+    return zone.min_x_m <= pose.x_m <= zone.max_x_m and zone.min_y_m <= pose.y_m <= zone.max_y_m
+
+
 def _shortest_yaw_delta(start_rad: float, target_rad: float) -> float:
     return atan2(sin(target_rad - start_rad), cos(target_rad - start_rad))
 
 
-def _validate_turn_contract(evidence: Any, world: dict[str, Any], *, now_stamp_ns: int, max_age_ns: int) -> dict[str, Any]:
+def _validate_loaded_transport_contract(
+    evidence: Any, world: dict[str, Any], zone: YellowWorkZone, *,
+    pickup_pose: NavigationPose, place_pose: NavigationPose, now_stamp_ns: int, max_age_ns: int,
+) -> dict[str, Any]:
     if not isinstance(evidence, dict):
-        return {"valid": False, "reason": "turn_safety_contract_missing", "reasons": ["turn_safety_contract_missing"]}
+        return {"valid": False, "reason": "loaded_transport_safety_contract_missing", "reasons": ["loaded_transport_safety_contract_missing"]}
     reasons: list[str] = []
-    for field in ("turn_safe_pose_confirmed", "collision_sweep_validated"):
+    for field in ("transport_safe_pose_confirmed", "full_transport_collision_sweep_validated"):
         if evidence.get(field) is not True:
             reasons.append(f"{field}_required")
     if evidence.get("source") != "isaac_sim_collision_sweep":
-        reasons.append("turn_safety_source_invalid")
+        reasons.append("loaded_transport_safety_source_invalid")
     if evidence.get("world_id") != world.get("world_id"):
-        reasons.append("turn_safety_world_id_mismatch")
+        reasons.append("loaded_transport_world_id_mismatch")
     if str(evidence.get("scene_sha256") or "").lower() != world.get("scene_sha256"):
-        reasons.append("turn_safety_scene_sha256_mismatch")
+        reasons.append("loaded_transport_scene_sha256_mismatch")
     try:
         seed = int(evidence.get("random_seed"))
     except (TypeError, ValueError):
         seed = -1
     if seed != world.get("random_seed"):
-        reasons.append("turn_safety_random_seed_mismatch")
+        reasons.append("loaded_transport_random_seed_mismatch")
+    if evidence.get("yellow_work_zone_id") != zone.zone_id:
+        reasons.append("loaded_transport_yellow_work_zone_mismatch")
+    if evidence.get("pickup_pose_id") != pickup_pose.pose_id:
+        reasons.append("loaded_transport_pickup_pose_mismatch")
+    if evidence.get("place_pose_id") != place_pose.pose_id:
+        reasons.append("loaded_transport_place_pose_mismatch")
     stamp = _stamp_ns(evidence)
     if stamp <= 0 or stamp > now_stamp_ns or now_stamp_ns - stamp > max_age_ns:
-        reasons.append("turn_safety_contract_stale_or_invalid")
+        reasons.append("loaded_transport_safety_contract_stale_or_invalid")
     return {
         "valid": not reasons,
         "reason": "ok" if not reasons else reasons[0],
         "reasons": reasons,
-        "turn_safe_pose_confirmed": evidence.get("turn_safe_pose_confirmed") is True,
-        "collision_sweep_validated": evidence.get("collision_sweep_validated") is True,
+        "transport_safe_pose_confirmed": evidence.get("transport_safe_pose_confirmed") is True,
+        "full_transport_collision_sweep_validated": evidence.get("full_transport_collision_sweep_validated") is True,
         "physical_validated": False,
     }
 
@@ -251,10 +308,11 @@ def _profile_failure(profile: DualPenTransportProfile) -> str | None:
         profile.min_confidence, profile.min_pen_separation_m, profile.min_tool_clearance_m,
         profile.pregrasp_offset_m, profile.approach_offset_m, profile.lift_distance_m,
         profile.retreat_offset_m, profile.phase_timeout_sec, profile.navigation_timeout_sec,
-        profile.turn_timeout_sec, profile.turn_settling_margin_sec,
+        profile.loaded_transport_timeout_sec, profile.loaded_transport_settling_margin_sec,
+        profile.loaded_transport_feedback_deadman_sec,
         profile.max_barrier_skew_sec, profile.translation_x_tolerance_m,
-        profile.translation_y_tolerance_m, profile.max_turn_angular_z_rad_s,
-        profile.turn_yaw_tolerance_rad,
+        profile.translation_y_tolerance_m, profile.max_loaded_linear_mps,
+        profile.max_loaded_angular_z_rad_s, profile.loaded_yaw_tolerance_rad,
     ):
         if not isfinite(float(value)) or float(value) < 0.0:
             return "simulation_site_profile_invalid"
@@ -264,14 +322,18 @@ def _profile_failure(profile: DualPenTransportProfile) -> str | None:
         return "simulation_site_profile_invalid"
     if profile.translation_x_tolerance_m <= 0.0 or profile.translation_y_tolerance_m <= 0.0:
         return "simulation_site_profile_invalid"
-    if profile.max_turn_angular_z_rad_s <= 0.0 or profile.turn_yaw_tolerance_rad <= 0.0:
+    if profile.max_loaded_linear_mps <= 0.0 or profile.max_loaded_angular_z_rad_s <= 0.0 or profile.loaded_yaw_tolerance_rad <= 0.0:
         return "simulation_site_profile_invalid"
-    if profile.max_turn_angular_z_rad_s > 0.10:
-        return "max_turn_angular_z_rad_s_exceeds_0_10"
-    if profile.turn_yaw_tolerance_rad > 0.03490658503988659:
-        return "turn_yaw_tolerance_exceeds_two_degrees"
-    if profile.turn_zero_confirmation_count != 5:
-        return "turn_zero_confirmation_count_must_be_five"
+    if profile.max_loaded_linear_mps > 0.05:
+        return "max_loaded_linear_mps_exceeds_0_05"
+    if profile.max_loaded_angular_z_rad_s > 0.10:
+        return "max_loaded_angular_z_rad_s_exceeds_0_10"
+    if profile.loaded_yaw_tolerance_rad > 0.03490658503988659:
+        return "loaded_yaw_tolerance_exceeds_two_degrees"
+    if profile.loaded_zero_confirmation_count != 5:
+        return "loaded_zero_confirmation_count_must_be_five"
+    if not 0.0 < profile.loaded_transport_feedback_deadman_sec <= 0.20:
+        return "loaded_transport_feedback_deadman_sec_exceeds_0_20"
     if profile.lift_vector_base_unit is None:
         return "lift_vector_base_unit_missing"
     try:
@@ -417,34 +479,49 @@ def _dual_step(
 def build_dual_pen_transport_plan(
     perception_payload: dict[str, Any], *, now_stamp_ns: int,
     profile: DualPenTransportProfile = DualPenTransportProfile(),
-    yellow_work_pose: NavigationPose | None = None,
-    table_2_orientation_pose: NavigationPose | None = None,
+    pickup_work_pose: NavigationPose | None = None,
+    place_work_pose: NavigationPose | None = None,
+    yellow_work_zone: YellowWorkZone | None = None,
     table_2_drop_targets: dict[str, Any] | None = None,
     simulation_world: SimulationWorldBinding | None = None,
-    turn_safety_contract: dict[str, Any] | None = None,
+    loaded_transport_safety_contract: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Build the complete table-1 to table-2 simulation intent sequence."""
+    """Build a simulation-only table-1 to table-2 transfer plan.
+
+    Pickup and placement use distinct site-measured poses.  The only permitted
+    loaded base movement is the explicitly bounded reposition intent between
+    those two poses inside ``yellow_work_zone``.
+    """
     if not isinstance(perception_payload, dict):
         return _reject("perception_payload_invalid")
     profile_error = _profile_failure(profile)
     if profile_error:
         return _reject(profile_error)
-    if yellow_work_pose is None or table_2_orientation_pose is None:
-        return _reject("yellow_and_table_2_orientation_poses_required")
-    error = _validate_pose(yellow_work_pose, "yellow_work_pose")
+    if pickup_work_pose is None or place_work_pose is None:
+        return _reject("pickup_and_place_work_poses_required")
+    error = _validate_pose(pickup_work_pose, "pickup_work_pose")
     if error:
         return _reject(error)
-    error = _validate_pose(table_2_orientation_pose, "table_2_orientation_pose")
+    error = _validate_pose(place_work_pose, "place_work_pose")
     if error:
         return _reject(error)
-    if abs(table_2_orientation_pose.x_m - yellow_work_pose.x_m) > profile.translation_x_tolerance_m:
-        return _reject("table_2_orientation_pose_x_must_remain_at_yellow")
-    if abs(table_2_orientation_pose.y_m - yellow_work_pose.y_m) > profile.translation_y_tolerance_m:
-        return _reject("table_2_orientation_pose_y_must_remain_at_yellow")
-    shortest_yaw_delta = _shortest_yaw_delta(yellow_work_pose.yaw_rad, table_2_orientation_pose.yaw_rad)
-    minimum_turn_timeout_sec = abs(shortest_yaw_delta) / profile.max_turn_angular_z_rad_s + profile.turn_settling_margin_sec
-    if profile.turn_timeout_sec + 1e-9 < minimum_turn_timeout_sec:
-        return _reject("turn_timeout_insufficient")
+    zone = _validate_yellow_work_zone(yellow_work_zone)
+    if not zone["valid"]:
+        return _reject(zone["reason"], reasons=list(zone["reasons"]))
+    assert yellow_work_zone is not None
+    if not _pose_inside_zone(pickup_work_pose, yellow_work_zone):
+        return _reject("pickup_work_pose_outside_yellow_work_zone")
+    if not _pose_inside_zone(place_work_pose, yellow_work_zone):
+        return _reject("place_work_pose_outside_yellow_work_zone")
+    loaded_translation_m = sqrt((place_work_pose.x_m - pickup_work_pose.x_m) ** 2 + (place_work_pose.y_m - pickup_work_pose.y_m) ** 2)
+    shortest_yaw_delta = _shortest_yaw_delta(pickup_work_pose.yaw_rad, place_work_pose.yaw_rad)
+    minimum_transport_timeout_sec = (
+        loaded_translation_m / profile.max_loaded_linear_mps
+        + abs(shortest_yaw_delta) / profile.max_loaded_angular_z_rad_s
+        + profile.loaded_transport_settling_margin_sec
+    )
+    if profile.loaded_transport_timeout_sec + 1e-9 < minimum_transport_timeout_sec:
+        return _reject("loaded_transport_timeout_insufficient")
     transform = validate_sim_camera_to_base_transform(
         perception_payload.get("camera_to_base"), now_stamp_ns=now_stamp_ns,
         max_age_ns=profile.max_candidate_age_ns,
@@ -456,12 +533,13 @@ def build_dual_pen_transport_plan(
     )
     if not world["valid"]:
         return _reject(world["reason"], reasons=list(world.get("reasons") or [world["reason"]]))
-    turn_safety = _validate_turn_contract(
-        turn_safety_contract, world, now_stamp_ns=now_stamp_ns,
+    transport_safety = _validate_loaded_transport_contract(
+        loaded_transport_safety_contract, world, yellow_work_zone,
+        pickup_pose=pickup_work_pose, place_pose=place_work_pose, now_stamp_ns=now_stamp_ns,
         max_age_ns=profile.max_candidate_age_ns,
     )
-    if not turn_safety["valid"]:
-        return _reject(turn_safety["reason"], reasons=list(turn_safety["reasons"]))
+    if not transport_safety["valid"]:
+        return _reject(transport_safety["reason"], reasons=list(transport_safety["reasons"]))
     assignments, selection_error = _select_distinct_pair(perception_payload, profile, now_stamp_ns)
     if selection_error or assignments is None:
         return _reject(selection_error or "candidate_selection_failed")
@@ -474,37 +552,38 @@ def build_dual_pen_transport_plan(
         assignments[side]["drop_id"] = drop["drop_id"]
         assignments[side]["drop_poses"] = drop["poses"]
     steps = [
-        {"phase": "navigate_pickup", "name": "navigate_red_start_to_yellow_work_pose", "kind": "navigation_gate", "goal": vars(yellow_work_pose), "deadline_sec": profile.navigation_timeout_sec, "translation_lock_required": False, "base_translation_command_permitted": True, "base_rotation_command_permitted": True, "commands_emitted": False},
+        {"phase": "navigate_pickup", "name": "navigate_red_start_to_pickup_work_pose", "kind": "navigation_gate", "goal": vars(pickup_work_pose), "deadline_sec": profile.navigation_timeout_sec, "translation_lock_required": False, "base_translation_command_permitted": True, "base_rotation_command_permitted": True, "commands_emitted": False},
         {"phase": "verify_pickup_targets", "name": "require_fresh_distinct_table_1_pens", "kind": "perception_gate", "target_ids": [assignments["left"]["target_id"], assignments["right"]["target_id"]], "translation_lock_required": True, "translation_x_tolerance_m": profile.translation_x_tolerance_m, "translation_y_tolerance_m": profile.translation_y_tolerance_m, "base_translation_command_permitted": False, "base_rotation_command_permitted": False, "commands_emitted": False},
         _dual_step("pregrasp", "both_arms_pregrasp", assignments, profile.phase_timeout_sec, profile),
         _dual_step("approach", "both_arms_approach", assignments, profile.phase_timeout_sec, profile),
         _dual_step("contact", "both_arms_contact_different_pens", assignments, profile.phase_timeout_sec, profile),
         _dual_step("close", "both_grippers_close", assignments, profile.phase_timeout_sec, profile),
         _dual_step("confirm_grasp", "require_both_grasp_feedback", assignments, profile.phase_timeout_sec, profile),
-        _dual_step("lift", "both_arms_lift_to_turn_safe_pose", assignments, profile.phase_timeout_sec, profile),
+        _dual_step("lift", "both_arms_lift_to_transport_safe_pose", assignments, profile.phase_timeout_sec, profile),
         {
-            "phase": "rotate_in_place_to_table_2", "name": "controlled_yaw_only_turn_at_yellow",
-            "kind": "rotation_intent", "start_pose": vars(yellow_work_pose),
-            "target_orientation_pose_evidence": vars(table_2_orientation_pose),
+            "phase": "reposition_with_payload_to_table_2", "name": "bounded_loaded_reposition_inside_yellow_work_zone",
+            "kind": "loaded_reposition_intent", "start_pose": vars(pickup_work_pose),
+            "target_pose": vars(place_work_pose), "yellow_work_zone": zone,
             "yaw_source": "scene_bound_explicit_pose_contract",
-            "rotation_center_xy_m": [yellow_work_pose.x_m, yellow_work_pose.y_m],
-            "target_yaw_rad": table_2_orientation_pose.yaw_rad,
+            "loaded_translation_m": loaded_translation_m,
             "shortest_yaw_delta_rad": shortest_yaw_delta,
-            "requires": ["turn_safe_pose_confirmed", "both_grasps_confirmed", "collision_sweep_validated"],
-            "turn_safe_pose_confirmed": turn_safety["turn_safe_pose_confirmed"],
-            "collision_sweep_validated": turn_safety["collision_sweep_validated"],
-            "translation_lock_required": True,
+            "requires": ["transport_safe_pose_confirmed", "both_grasps_confirmed", "full_transport_collision_sweep_validated", "tf_available", "odom_available"],
+            "transport_safe_pose_confirmed": transport_safety["transport_safe_pose_confirmed"],
+            "full_transport_collision_sweep_validated": transport_safety["full_transport_collision_sweep_validated"],
+            "translation_lock_required": False,
             "translation_x_tolerance_m": profile.translation_x_tolerance_m,
             "translation_y_tolerance_m": profile.translation_y_tolerance_m,
-            "base_translation_command_permitted": False,
+            "base_translation_command_permitted": True,
             "base_rotation_command_permitted": True,
-            "required_linear_x_mps": 0.0, "required_linear_y_mps": 0.0,
-            "max_abs_angular_z_rad_s": profile.max_turn_angular_z_rad_s,
-            "yaw_tolerance_rad": profile.turn_yaw_tolerance_rad,
-            "zero_velocity_confirmations_required": profile.turn_zero_confirmation_count,
-            "minimum_turn_timeout_sec": minimum_turn_timeout_sec,
-            "settling_margin_sec": profile.turn_settling_margin_sec,
-            "deadline_sec": profile.turn_timeout_sec, "commands_emitted": False,
+            "max_abs_linear_mps": profile.max_loaded_linear_mps,
+            "max_abs_angular_z_rad_s": profile.max_loaded_angular_z_rad_s,
+            "target_xy_tolerance_m": profile.translation_x_tolerance_m,
+            "yaw_tolerance_rad": profile.loaded_yaw_tolerance_rad,
+            "feedback_deadman_sec": profile.loaded_transport_feedback_deadman_sec,
+            "zero_velocity_confirmations_required": profile.loaded_zero_confirmation_count,
+            "minimum_transport_timeout_sec": minimum_transport_timeout_sec,
+            "settling_margin_sec": profile.loaded_transport_settling_margin_sec,
+            "deadline_sec": profile.loaded_transport_timeout_sec, "commands_emitted": False,
         },
         _dual_step("place_pregrasp", "both_arms_table_2_pregrasp", assignments, profile.phase_timeout_sec, profile, placement=True),
         _dual_step("place_approach", "both_arms_table_2_approach", assignments, profile.phase_timeout_sec, profile, placement=True),
@@ -521,15 +600,16 @@ def build_dual_pen_transport_plan(
         "physical_execution_eligible": False,
         "simulation_execution_eligible": True,
         "simulation_execution_allowed": True,
-        "translation_lock_required_after_yellow": True,
+        "translation_lock_required_at_work_poses": True,
         "translation_x_tolerance_m": profile.translation_x_tolerance_m,
         "translation_y_tolerance_m": profile.translation_y_tolerance_m,
-        "translation_commands_permitted_after_yellow": False,
-        "rotation_permitted_only_in_phase": "rotate_in_place_to_table_2",
+        "translation_commands_permitted_only_in_phase": "reposition_with_payload_to_table_2",
+        "rotation_permitted_only_in_phase": "reposition_with_payload_to_table_2",
         "physical_execution_block_reason": "simulation_camera_to_base_transform_cannot_be_used_on_physical_robot",
         "transform": transform,
         "simulation_world": world,
-        "turn_safety": turn_safety,
+        "yellow_work_zone": zone,
+        "loaded_transport_safety": transport_safety,
         "assignments": assignments,
         "steps": steps,
         "required_motion_adapter_contract": required_motion_adapter_contract(),
