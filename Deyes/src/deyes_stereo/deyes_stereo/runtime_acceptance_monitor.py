@@ -66,6 +66,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             self.pointcloud_status_always_validated = True
             self.pointcloud_calibration_identity_consistent = True
             self._pointcloud_calibration_identity: str | None = None
+            self.finished = False
             # Camera/depth/point-cloud publishers use rclcpp::SensorDataQoS
             # (BEST_EFFORT + VOLATILE); the integer depth shorthand creates a
             # reliable subscription and is incompatible with those streams.
@@ -188,12 +189,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             paths = write_report(report, output_dir, "runtime_acceptance", "X1 Stereo Runtime Acceptance")
             self.get_logger().info(
                 f"wrote {raw_path}, {paths[0]} and {paths[1]}; validated={report['overall_validated']}")
-            rclpy.shutdown()
+            # Let the owning spin loop perform orderly node destruction and
+            # shutdown.  Calling rclpy.shutdown() from a timer callback does
+            # not reliably terminate rclpy.spin() on Galactic.
+            self.finished = True
 
     rclpy.init(args=ros_args)
+    collector = RuntimeCollector()
     try:
-        rclpy.spin(RuntimeCollector())
+        while rclpy.ok() and not collector.finished:
+            rclpy.spin_once(collector, timeout_sec=1.0)
     finally:
+        collector.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()
     return 0
