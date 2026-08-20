@@ -4,7 +4,7 @@ calibration_id: "spec-imx219-1280x720-debug"
 robot_id: "unverified"
 camera_pair_id: "imx219-sensor0-sensor1"
 img_size: [1280, 720]
-board_inner_corners: [8, 7]
+board_inner_corners: [9, 6]
 square_size_m: null
 reproj_rms_px: null
 epipolar_p95_px: null
@@ -104,6 +104,6 @@ cx: 640.0
 cy: 360.0
 fx: 864.9103602853174
 fy: 864.9103602853174
-note: "spec-based debug geometry only; physical 8x7-inner-corners checkerboard calibration with 0.020 m measured squares is required for trusted depth"
+note: "spec-based debug geometry only; physical 9x6-inner-corners checkerboard calibration with a newly measured square size is required for trusted depth"
 sensor_left: 0
 sensor_right: 1

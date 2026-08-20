@@ -19,16 +19,16 @@ Session directory: ${SESSION_DIR}
    ros2 launch deyes_bringup imx219_stereo.launch.py use_cpp_capture:=true \\
      width:=640 height:=360 fps:=30 enable_cuda_depth:=false
 
-2. The formal board is 8x7 inner corners (about 9x8 squares). After a person verifies its 0.020 m square edge, capture 40-60 pairs:
+2. The formal board is 9x6 inner corners. Measure this board's square edge with calipers before capture; do not reuse a previous board's value:
    ros2 run deyes_stereo physical_stereo_calibration capture \\
-     --session-dir ${SESSION_DIR} --board-cols 8 --board-rows 7 \\
-     --square-size-m 0.020 --samples 50
+     --session-dir ${SESSION_DIR} --board-cols 9 --board-rows 6 \\
+     --square-size-m <newly_measured_metres> --samples 50
 
 3. After the operator has checked left/right order, baseline sign and measured scale:
    ros2 run deyes_stereo physical_stereo_calibration compute \\
      --session-dir ${SESSION_DIR} --robot-id <confirmed_robot_id> \\
-     --camera-pair-id <confirmed_pair_id> --board-cols 8 --board-rows 7 \\
-     --square-size-m 0.020 \\
+     --camera-pair-id <confirmed_pair_id> --board-cols 9 --board-rows 6 \\
+     --square-size-m <exact_capture_measurement_metres> \\
      --confirm-left-right --confirm-baseline-sign --confirm-scale
 
 The candidate YAML and JSON/Markdown report stay in the session directory. Do not

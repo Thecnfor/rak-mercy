@@ -13,10 +13,10 @@
 
 ## 2. 标定板要求
 
-- 本轮唯一正式目标板型为尺寸经过卡尺复测的 `checkerboard 8x7 内角点` 板（约 `9x8` 方格）。
+- 本轮唯一正式目标板型为 `checkerboard 9x6 内角点` 板。
 - 记录以下信息：
-  - 内角点规格（`8 x 7`）
-  - 单个方格边长（本板必须显式记录为 `0.020 m`）
+  - 内角点规格（`9 x 6`）
+  - 新板单个方格边长（本次必须用卡尺实测；不得继承旧 `8x7` 板的 `0.020 m`）
   - 板子编号或打印批次
 
 ## 3. 采集要求
@@ -72,7 +72,7 @@ E:/a_robot/temp/deyes/calibration/<session>/stereo_calib_candidate.yaml
 
 2. `步骤 2 / 板信息`
 - 用户动作：录入板编号、单方格边长
-- 固定条件：`checkerboard 8 x 7 inner corners`、`print at 100% scale`
+- 固定条件：`checkerboard 9 x 6 inner corners`、`print at 100% scale`
 
 3. `步骤 3 / 采集`
 - 对应任务：`采集棋盘格`
@@ -108,7 +108,7 @@ E:/a_robot/temp/deyes/calibration/<session>/stereo_calib_candidate.yaml
 - 标定分辨率与运行分辨率不一致
 - 相机支架重装后仍沿用旧标定
 - 现场无法确认 `robot_id` 或相机标识，无法形成可审计文件名
-- 标定板规格与 `--board-cols 8 --board-rows 7` 不一致，或 compute 参数与 capture manifest 不一致
+- 标定板规格与 `--board-cols 9 --board-rows 6` 不一致，或 compute 参数与 capture manifest 不一致
 - 操作者没有确认左右目、基线符号和尺度三项
 
 ## 现场命令（人工检查点）
@@ -122,12 +122,12 @@ ros2 launch deyes_bringup imx219_stereo.launch.py use_cpp_capture:=true \
   width:=640 height:=360 fps:=30 enable_cuda_depth:=false
 ```
 
-实体棋盘必须为 `8x7` 内角点（约 `9x8` 方格）；已实测单格边长为 `0.020 m`。capture 会把板型写入会话和每个样本，compute 必须显式传入相同板型及格长；旧 `9x6` 会话不能与本板混用。操作者确认相机支架固定、左右话题未交换后执行：
+实体棋盘必须为 `9x6` 内角点。新板单格边长尚未测量，必须先用卡尺测量；不得继承旧 `8x7` 板的 `0.020 m`。capture 会把板型写入会话和每个样本，compute 必须显式传入相同板型及格长；旧 `8x7` 会话不能与本板混用。操作者确认相机支架固定、左右话题未交换后执行：
 
 ```bash
 ros2 run deyes_stereo physical_stereo_calibration capture \
   --session-dir /home/elephant/temp/deyes/calibration/<utc-session> \
-  --board-cols 8 --board-rows 7 --square-size-m 0.020 --samples 50
+  --board-cols 9 --board-rows 6 --square-size-m <newly_measured_metres> --samples 50
 ```
 
 移动棋盘覆盖九宫格、近中远距离和倾角，工具到 50 个有效帧后自动结束。核对候选点云方向、`T[0]` 符号和已知格长尺度后，才可显式确认并求解：
@@ -136,7 +136,7 @@ ros2 run deyes_stereo physical_stereo_calibration capture \
 ros2 run deyes_stereo physical_stereo_calibration compute \
   --session-dir /home/elephant/temp/deyes/calibration/<utc-session> \
   --robot-id <confirmed_robot_id> --camera-pair-id <confirmed_pair_id> \
-  --board-cols 8 --board-rows 7 --square-size-m 0.020 \
+  --board-cols 9 --board-rows 6 --square-size-m <exact_capture_measurement_metres> \
   --confirm-left-right --confirm-baseline-sign --confirm-scale
 ```
 

@@ -7,7 +7,7 @@ import math
 from typing import Any, Iterable, Sequence
 
 
-DEFAULT_BOARD_INNER_CORNERS = (8, 7)
+DEFAULT_BOARD_INNER_CORNERS = (9, 6)
 MIN_BOARD_INNER_CORNERS = 4
 CALIBRATION_SIZE = (640, 360)
 MIN_SAMPLES = 40

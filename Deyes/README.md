@@ -439,7 +439,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
 
 ## M2 物理标定
 
-- 本轮目标：通过外部 `ROBOT_IP` 注入的实机按 `checkerboard 8x7 inner corners + 0.020m + 640x360@30` 执行物理双目标定。
+- 本轮目标：通过外部 `ROBOT_IP` 注入的实机按 `checkerboard 9x6 inner corners + 640x360@30` 执行物理双目标定。
 - 执行前提：
   - 相机支架固定，不再重装。
   - `640x360@30` 下主链预热后进入 `publish_hz≈30`，且 `drop_skew` 不持续增长。
@@ -447,7 +447,7 @@ ros2 launch deyes_bringup pointcloud.launch.py \
   - 机器人标识与双目对标识可用于 YAML 命名。
 - 当前执行路径：
   - 远端 `deyes_stereo physical_stereo_calibration` 使用**棋盘格** `capture/compute` 流程。
-  - 现场应使用 `inner corners: 8 x 7`（约 `9x8` 方格）、`print at 100% scale` 的棋盘格标定板，并显式记录 `0.020 m` 单格边长。
+  - 现场应使用 `inner corners: 9 x 6`、`print at 100% scale` 的棋盘格标定板，并在本次采集前重新测量、显式记录单格边长。
 - 停止条件：
   - `640x360@30` 下主链无法满足标定采集前提。
   - 现场无法确认机器人标识、双目对标识或板尺寸。

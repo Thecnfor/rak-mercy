@@ -37,7 +37,7 @@ def test_spec_calibration_is_explicitly_unvalidated() -> None:
         "robot_id:",
         "camera_pair_id:",
         "img_size:",
-        "board_inner_corners: [8, 7]",
+        "board_inner_corners: [9, 6]",
         "square_size_m:",
         "reproj_rms_px:",
         "epipolar_p95_px:",
