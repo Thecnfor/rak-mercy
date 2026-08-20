@@ -218,7 +218,7 @@ def test_yolo_detector_launch_and_defaults_exist() -> None:
     assert 'DeclareLaunchArgument("detector_model_path", default_value="")' in launch_content
     assert 'executable="yolo_detector"' in launch_content
 
-    assert 'image_topic: "/x1/left_camera/image_raw"' in config_content
+    assert 'image_topic: "/x1/stereo/debug/left_rect"' in config_content
     assert 'output_topic: "/x1/detection/boxes"' in config_content
     assert 'status_topic: "/x1/detection/boxes_status"' in config_content
     assert 'debug_image_topic: "/x1/detection/debug_image"' in config_content
