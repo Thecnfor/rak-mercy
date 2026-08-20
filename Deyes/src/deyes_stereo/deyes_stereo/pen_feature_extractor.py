@@ -100,6 +100,25 @@ def extract_one_pen(image: RectifiedImage, payload: dict[str, Any], params: Extr
     return feature, "ok" if complete else "axis_incomplete"
 
 
+def build_feature_payload(
+    image: RectifiedImage,
+    feature: dict[str, Any] | None,
+    reason: str,
+) -> dict[str, Any]:
+    """Build a frame-scoped result, including an explicit empty result."""
+    return {
+        "stamp_sec": image.stamp_ns // 1_000_000_000,
+        "stamp_nanosec": image.stamp_ns % 1_000_000_000,
+        "frame_id": image.frame_id,
+        "source_frame": image.frame_id,
+        "image_width": image.width,
+        "image_height": image.height,
+        "features": [] if feature is None else [feature],
+        "axis_complete": bool(feature is not None and feature.get("axis_complete", False)),
+        "rejection_reason": None if feature is not None else reason,
+    }
+
+
 class PenFeatureJoiner:
     def __init__(self, capacity: int = 8, max_age_ns: int = 500_000_000) -> None:
         self._pairs = ExactStampPairCache(capacity, max_age_ns)

@@ -4,7 +4,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 ROOT=Path(__file__).resolve().parents[1]; sys.path.insert(0,str(ROOT/"src"/"deyes_stereo"))
-from deyes_stereo.pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, extract_one_pen
+from deyes_stereo.pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, build_feature_payload, extract_one_pen
 from deyes_stereo.pen_grasp_contract import parse_pen_features
 
 def scene(angle:float=0.,value:int=30,center=(80,60)):
@@ -26,6 +26,11 @@ def test_empty_multi_edge_and_stamp_fail_closed():
     assert extract_one_pen(image,{**payload(1,bbox),"image_width":159})[1] == "detection_image_size_mismatch"
     edge,b=scene(0,30,(15,60)); feature,reason=extract_one_pen(RectifiedImage(1,"left",160,120,edge),payload(1,b)); assert feature is not None and feature["axis_complete"] is False
 
+def test_empty_frame_result_clears_stale_geometry_with_exact_stamp():
+    image=RectifiedImage(2_000_000_003,"left_camera_optical_frame",640,360,np.zeros((360,640),np.uint8))
+    result=build_feature_payload(image,None,"waiting_for_one_pen")
+    assert result == {"stamp_sec":2,"stamp_nanosec":3,"frame_id":"left_camera_optical_frame","source_frame":"left_camera_optical_frame","image_width":640,"image_height":360,"features":[],"axis_complete":False,"rejection_reason":"waiting_for_one_pen"}
+
 def test_empty_box_rejects_and_insufficient_elongation_is_explicitly_incomplete():
     blank=np.full((120,160),150,np.uint8); box=[40,40,120,80]
     assert extract_one_pen(RectifiedImage(1,"left",160,120,blank),payload(1,box))[1] == "no_elongated_component"
@@ -43,3 +48,13 @@ def test_feature_keeps_pen_grasp_contract_fields():
     assert reason == "ok"
     parsed=parse_pen_features({"features":[feature]})
     assert parsed[0]["id"] == "target_00"
+
+def test_offline_qa_can_use_saved_yolo_predictions(tmp_path):
+    sys.path.insert(0,str(ROOT/"tools"))
+    from pen_feature_offline_qa import apply_yolo_predictions
+    labels=tmp_path/"labels"; labels.mkdir()
+    (labels/"positive.txt").write_text("0 0.5 0.5 0.25 0.5 0.9\n",encoding="utf-8")
+    records=[{"image_id":"positive","width":640,"height":360,"boxes":[]},{"image_id":"negative","width":640,"height":360,"boxes":[[1,2,3,4]]}]
+    actual=apply_yolo_predictions(records,labels)
+    assert actual[0]["boxes"] == [[240.0,90.0,400.0,270.0]]
+    assert actual[1]["boxes"] == []

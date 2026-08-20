@@ -6,7 +6,7 @@ from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 from std_msgs.msg import String
-from .pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, extract_one_pen
+from .pen_feature_extractor import ExtractorParams, PenFeatureJoiner, RectifiedImage, build_feature_payload, extract_one_pen
 
 def _stamp(msg: Image) -> int: return int(msg.header.stamp.sec) * 1_000_000_000 + int(msg.header.stamp.nanosec)
 def _gray(msg: Image) -> np.ndarray:
@@ -30,9 +30,12 @@ class PenFeatureNode(Node):
         m=String(); m.data=json.dumps({"level":level,"reason":reason,**extra},separators=(",",":")); self._status_pub.publish(m)
     def _process(self,payload:dict[str,object],image:RectifiedImage)->None:
         feature,reason=extract_one_pen(image,payload,self._params)
-        if feature is None: self._status(reason); return
-        result={"stamp_sec":image.stamp_ns//1_000_000_000,"stamp_nanosec":image.stamp_ns%1_000_000_000,"frame_id":image.frame_id,"source_frame":image.frame_id,"image_width":image.width,"image_height":image.height,"features":[feature],"axis_complete":feature["axis_complete"]}
-        m=String();m.data=json.dumps(result,separators=(",",":"));self._out.publish(m);self._status(reason,"ok" if feature["axis_complete"] else "warn",target_id=feature["target_id"])
+        result=build_feature_payload(image,feature,reason)
+        m=String();m.data=json.dumps(result,separators=(",",":"));self._out.publish(m)
+        if feature is None:
+            self._status(reason,frame_result="empty")
+            return
+        self._status(reason,"ok" if feature["axis_complete"] else "warn",target_id=feature["target_id"])
     def _on_detection(self,msg:String)->None:
         try: payload=json.loads(msg.data); pair=self._joiner.add_detection(payload,time.monotonic_ns())
         except Exception as exc: self._status(f"invalid_detection_json:{exc}");return

@@ -62,7 +62,10 @@ def _payload(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def evaluate(records: list[dict[str, Any]]) -> dict[str, Any]:
+def evaluate(
+    records: list[dict[str, Any]],
+    bbox_source: str = "manual ground_truth_index.jsonl",
+) -> dict[str, Any]:
     batches: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"positive_images": 0, "not_applicable_images": 0, "usable": 0,
                  "angle_checked": 0, "angle_consistent": 0, "failures": []}
@@ -112,20 +115,59 @@ def evaluate(records: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "report_type": "pen_feature_geometric_availability",
         "claim_limit": "No pixel ground truth: this is not segmentation accuracy.",
-        "bbox_source": "manual ground_truth_index.jsonl",
-        "evaluation_gate": "exactly one manually annotated pen bbox per image",
+        "bbox_source": bbox_source,
+        "evaluation_gate": "exactly one pen bbox per image",
         "totals": total,
         "batches": dict(sorted(batches.items())),
     }
 
 
+def apply_yolo_predictions(
+    records: list[dict[str, Any]],
+    label_dir: Path,
+) -> list[dict[str, Any]]:
+    """Replace manual boxes with normalized YOLO prediction labels."""
+    predicted: list[dict[str, Any]] = []
+    for source in records:
+        record = dict(source)
+        boxes: list[list[float]] = []
+        label_path = label_dir / f"{record['image_id']}.txt"
+        if label_path.exists():
+            for line_number, line in enumerate(label_path.read_text(encoding="utf-8").splitlines(), 1):
+                values = line.split()
+                if len(values) not in (5, 6):
+                    raise ValueError(f"{label_path}:{line_number}: expected 5 or 6 YOLO fields")
+                _, center_x, center_y, width, height = map(float, values[:5])
+                image_width, image_height = float(record["width"]), float(record["height"])
+                boxes.append([
+                    (center_x - width / 2.0) * image_width,
+                    (center_y - height / 2.0) * image_height,
+                    (center_x + width / 2.0) * image_width,
+                    (center_y + height / 2.0) * image_height,
+                ])
+        record["boxes"] = boxes
+        predicted.append(record)
+    return predicted
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--ground-truth", type=Path, required=True)
+    parser.add_argument(
+        "--prediction-label-dir",
+        type=Path,
+        help="Optional YOLO save-txt directory; missing files mean zero detections.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     records = [json.loads(line) for line in args.ground_truth.read_text(encoding="utf-8").splitlines() if line]
-    report = evaluate(records)
+    bbox_source = "manual ground_truth_index.jsonl"
+    if args.prediction_label_dir is not None:
+        if not args.prediction_label_dir.is_dir():
+            parser.error(f"prediction label directory does not exist: {args.prediction_label_dir}")
+        records = apply_yolo_predictions(records, args.prediction_label_dir)
+        bbox_source = f"YOLO saved predictions: {args.prediction_label_dir}"
+    report = evaluate(records, bbox_source=bbox_source)
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     print(json.dumps(report["totals"], sort_keys=True))
