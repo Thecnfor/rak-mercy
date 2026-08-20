@@ -31,3 +31,5 @@ Phase 4 的纯 Python 回归在 `test_stereo_acceptance.py`：固定验证四个
 
 - 当前 Jetson `ROS 2 Galactic` 环境已确认默认**未安装** `stereo_image_proc`，因此官方几何基线在安装该包前无法直接运行。
 - `sgbm_baseline` 可以在现有 `IMX219 -> image_raw + camera_info` 链路上直接做 debug 级别验证。
+
+办公笔数据采集的 ROS-free 回归在 `test_pen_dataset_capture.py`；实机采集、按摆放批次划分和 YOLOv5/TensorRT 训练入口见 `tools/pen_dataset_workflow.md`。图片、标签、模型和 TensorRT engine 必须留在仓库外的 `temp/deyes`。

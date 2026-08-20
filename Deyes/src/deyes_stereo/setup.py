@@ -29,6 +29,7 @@ setup(
             "physical_stereo_calibration = deyes_stereo.physical_stereo_calibration:main",
             "stereo_acceptance = deyes_stereo.stereo_acceptance:main",
             "runtime_acceptance_monitor = deyes_stereo.runtime_acceptance_monitor:main",
+            "pen_dataset_capture = deyes_stereo.pen_dataset_capture_node:main",
         ],
     },
 )
