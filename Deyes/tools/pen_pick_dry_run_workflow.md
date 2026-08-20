@@ -10,7 +10,7 @@ and publishes a reviewable intent sequence on `/x1/pick/dry_run_plan`.
 ```text
 rectified left YOLO -> pen_features (same stamp) -> depth + rectified CameraInfo
   -> dynamic camera-relative table removal -> validated base_link candidate
-  -> pen_pick_dry_run -> [future reviewed Nav2/Mercury adapter]
+  -> pen_pick_dry_run -> [future reviewed Mercury single-arm adapter]
 ```
 
 The candidate contract must provide exactly one target, exact-frame timestamp,
@@ -19,8 +19,10 @@ grasp point, pen axis, approach normal, and depth/detection quality fields.
 The dry-run planner rejects stale input, weak depth/detection evidence, a
 missing/invalid site workspace, incompatible axes, and every pose that exits
 that workspace. The default equal min/max bounds are intentionally invalid.
-On success it emits: navigation-arrival verification,
-pre-grasp, approach, grasp, close-gripper intent, lift, and safe retreat.
+On success it emits pre-grasp, approach, grasp, close-gripper intent, lift,
+and safe retreat. The current bench/offline workflow deliberately does not
+navigate. A navigation-arrival gate is available only through the explicit
+`include_navigation_gate:true` future option.
 
 `tool_basis_columns_base` is explicit: `[gripper_long_axis, lateral_axis,
 outbound_approach_axis]`. A hardware adapter must bind this to the confirmed
@@ -38,6 +40,28 @@ gripper feedback, and operator approval immediately before each action.
   sign, collision model, and named arm are validated for this robot/table.
 - `enable_execution`: explicit per-launch authorization, default `false`.
 - `operator_approved`: explicit attended approval, default `false`.
+
+## Offline end-to-end acceptance
+
+`pen_pick_simulation.py` replays the candidate through a single selected arm
+(`left` or `right`) plus gripper. `FakeNav2Adapter` remains a future interface
+fixture and is not a prerequisite for the current local pick simulation. No
+simulation path represents two arms jointly grasping one pen.
+
+The simulator never imports `pymycobot`, rclpy, or a Nav2 client, and never
+publishes `joint_states`. Its `pen_pick_trace/v1` JSON records terminal status,
+ordered per-step result, timeout, and selected arm. The first rejection,
+timeout, unreachable pose, gripper failure, stale/invalid candidate, missing
+approval, or cancellation ends the trace immediately; later steps are absent.
+
+Use `write_simulation_trace` only for evidence output. It rejects paths outside
+`E:/a_robot/temp/deyes`. Tests use a generated minimal candidate and do not
+copy models, images, reports, or other `temp/deyes` data into Git.
+
+When moving to hardware, retain the planner, gates, JSON trace, and tests, and
+replace only fake adapters with separately reviewed concrete adapters. The real
+adapter must still provide cancellation, feedback, timeout, result, collision,
+and selected-arm/gripper feedback before it can be considered for execution.
 
 ## On-site gates before any adapter is added or enabled
 

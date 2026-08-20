@@ -18,14 +18,20 @@ def _payload(**candidate_changes):
     return {"stamp_sec": 19, "stamp_nanosec": 800_000_000, "valid": True, "trusted_for_grasp": True, "candidate_count": 1, "candidates": [candidate]}
 
 
-def test_valid_candidate_generates_pregrasp_to_retreat_intents_but_no_commands():
+def test_valid_candidate_generates_local_pregrasp_to_retreat_intents_but_no_commands():
     result = build_dry_run_plan(_payload(), now_stamp_ns=NOW, limits=LIMITS)
     assert result["state"] == "dry_run_ready"
     assert result["commands_emitted"] is False
-    assert [step["name"] for step in result["steps"]] == ["verify_navigation_arrival", "pre_grasp", "approach", "grasp", "close_gripper", "lift", "safe_retreat"]
-    pre = result["steps"][1]["pose"]["position_m"]
+    assert [step["name"] for step in result["steps"]] == ["pre_grasp", "approach", "grasp", "close_gripper", "lift", "safe_retreat"]
+    assert result["navigation_gate_included"] is False
+    pre = result["steps"][0]["pose"]["position_m"]
     assert np.allclose(pre, [.45, 0., .32])
     assert "motion_adapter_not_implemented" in result["execution_block_reasons"]
+
+
+def test_navigation_gate_is_explicitly_opt_in_for_a_future_navigation_flow():
+    result = build_dry_run_plan(_payload(), now_stamp_ns=NOW, limits=LIMITS, include_navigation_gate=True)
+    assert result["steps"][0]["name"] == "verify_navigation_arrival"
 
 
 def test_multiple_or_untrusted_candidates_are_rejected_before_planning():

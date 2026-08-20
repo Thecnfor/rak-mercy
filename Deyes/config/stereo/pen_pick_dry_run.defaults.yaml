@@ -8,6 +8,9 @@ pen_pick_dry_run_node:
     enable_execution: false
     operator_approved: false
     site_profile_validated: false
+    # The current offline/bench workflow does not navigate before a pick.
+    # Nav2 remains an opt-in future adapter boundary.
+    include_navigation_gate: false
     max_candidate_age_sec: 0.35
     min_detection_confidence: 0.50
     max_depth_mad_m: 0.012

@@ -21,6 +21,7 @@ class PenPickDryRunNode(Node):
             "candidate_topic": "/x1/grasp/pen_candidates", "plan_topic": "/x1/pick/dry_run_plan",
             "status_topic": "/x1/pick/dry_run_status", "enable_execution": False,
             "operator_approved": False, "site_profile_validated": False,
+            "include_navigation_gate": False,
             "max_candidate_age_sec": .35, "min_detection_confidence": .50,
             "max_depth_mad_m": .012, "min_mask_depth_valid_ratio": .25,
             "pregrasp_clearance_m": .12, "approach_distance_m": .08,
@@ -62,6 +63,7 @@ class PenPickDryRunNode(Node):
                 site_profile_validated=bool(self.get_parameter("site_profile_validated").value),
                 enable_execution=bool(self.get_parameter("enable_execution").value),
                 operator_approved=bool(self.get_parameter("operator_approved").value),
+                include_navigation_gate=bool(self.get_parameter("include_navigation_gate").value),
             )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             result = {"state": "rejected", "reason": f"invalid_candidate_json:{exc}", "commands_emitted": False}

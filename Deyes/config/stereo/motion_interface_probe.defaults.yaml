@@ -1,0 +1,7 @@
+motion_interface_probe_node:
+  ros__parameters:
+    status_topic: "/x1/pick/interface_probe_status"
+    publish_period_sec: 2.0
+    # Graph inspection only. This node never instantiates a command client.
+    check_interfaces_only: true
+    enable_execution: false

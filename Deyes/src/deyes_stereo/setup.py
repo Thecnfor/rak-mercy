@@ -30,6 +30,7 @@ setup(
             "handeye_calibration = deyes_stereo.handeye_calibration:main",
             "pen_grasp = deyes_stereo.pen_grasp_node:main",
             "pen_pick_dry_run = deyes_stereo.pen_pick_dry_run_node:main",
+            "motion_interface_probe = deyes_stereo.motion_interface_probe_node:main",
             "pen_feature = deyes_stereo.pen_feature_node:main",
             "physical_stereo_calibration = deyes_stereo.physical_stereo_calibration:main",
             "stereo_acceptance = deyes_stereo.stereo_acceptance:main",

@@ -13,6 +13,8 @@ from typing import Any
 
 import numpy as np
 
+from .motion_adapter_contract import required_motion_adapter_contract
+
 
 @dataclass(frozen=True)
 class PickPlanLimits:
@@ -95,7 +97,7 @@ def _basis(axis: np.ndarray, normal: np.ndarray) -> np.ndarray:
 def build_dry_run_plan(
     payload: dict[str, Any], *, now_stamp_ns: int, limits: PickPlanLimits = PickPlanLimits(),
     site_profile_validated: bool = False, enable_execution: bool = False,
-    operator_approved: bool = False,
+    operator_approved: bool = False, include_navigation_gate: bool = False,
 ) -> dict[str, Any]:
     """Validate one candidate and return immutable pre-grasp through retreat intents.
 
@@ -171,6 +173,17 @@ def build_dry_run_plan(
         execution_blocks.append("enable_execution_false")
     if not operator_approved:
         execution_blocks.append("operator_approval_missing")
+    steps: list[dict[str, Any]] = []
+    if include_navigation_gate:
+        steps.append({"name": "verify_navigation_arrival", "kind": "optional_gate", "requires": ["site_profile", "Nav2 arrival evidence"]})
+    steps.extend([
+        {"name": "pre_grasp", "kind": "cartesian_intent", "pose": pose_payload["pre_grasp"]},
+        {"name": "approach", "kind": "cartesian_intent", "pose": pose_payload["approach"]},
+        {"name": "grasp", "kind": "cartesian_intent", "pose": pose_payload["grasp"]},
+        {"name": "close_gripper", "kind": "gripper_intent"},
+        {"name": "lift", "kind": "cartesian_intent", "pose": pose_payload["lift"]},
+        {"name": "safe_retreat", "kind": "cartesian_intent", "pose": pose_payload["safe_retreat"]},
+    ])
     return {
         "state": "dry_run_ready",
         "reason": "ok",
@@ -178,15 +191,9 @@ def build_dry_run_plan(
         "target_id": str(candidate.get("target_id") or candidate.get("pen_id") or "pen"),
         "candidate_stamp_ns": stamp_ns,
         "tool_orientation_contract": "columns=[gripper_long_axis, lateral_axis, outbound_approach_axis]",
-        "steps": [
-            {"name": "verify_navigation_arrival", "kind": "gate", "requires": ["site_profile", "Nav2 arrival evidence"]},
-            {"name": "pre_grasp", "kind": "cartesian_intent", "pose": pose_payload["pre_grasp"]},
-            {"name": "approach", "kind": "cartesian_intent", "pose": pose_payload["approach"]},
-            {"name": "grasp", "kind": "cartesian_intent", "pose": pose_payload["grasp"]},
-            {"name": "close_gripper", "kind": "gripper_intent"},
-            {"name": "lift", "kind": "cartesian_intent", "pose": pose_payload["lift"]},
-            {"name": "safe_retreat", "kind": "cartesian_intent", "pose": pose_payload["safe_retreat"]},
-        ],
+        "navigation_gate_included": include_navigation_gate,
+        "steps": steps,
         "execution_eligible": False,
         "execution_block_reasons": execution_blocks,
+        "required_motion_adapter_contract": required_motion_adapter_contract(),
     }
