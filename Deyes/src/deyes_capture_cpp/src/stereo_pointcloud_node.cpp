@@ -61,6 +61,25 @@ std::string as_string(double value)
   return output.str();
 }
 
+sensor_msgs::msg::PointField make_point_field(
+  const std::string & name, uint32_t offset, uint8_t datatype, uint32_t count)
+{
+  sensor_msgs::msg::PointField field;
+  field.name = name;
+  field.offset = offset;
+  field.datatype = datatype;
+  field.count = count;
+  return field;
+}
+
+diagnostic_msgs::msg::KeyValue make_key_value(std::string key, std::string value)
+{
+  diagnostic_msgs::msg::KeyValue key_value;
+  key_value.key = std::move(key);
+  key_value.value = std::move(value);
+  return key_value;
+}
+
 }  // namespace
 
 StereoPointCloudNode::StereoPointCloudNode(const rclcpp::NodeOptions & options)
@@ -258,9 +277,9 @@ bool StereoPointCloudNode::process_pair(
   cloud.point_step = layout.point_step;
   cloud.row_step = layout.row_step;
   cloud.fields = {
-    sensor_msgs::msg::PointField{"x", 0U, sensor_msgs::msg::PointField::FLOAT32, 1U},
-    sensor_msgs::msg::PointField{"y", 4U, sensor_msgs::msg::PointField::FLOAT32, 1U},
-    sensor_msgs::msg::PointField{"z", 8U, sensor_msgs::msg::PointField::FLOAT32, 1U}};
+    make_point_field("x", 0U, sensor_msgs::msg::PointField::FLOAT32, 1U),
+    make_point_field("y", 4U, sensor_msgs::msg::PointField::FLOAT32, 1U),
+    make_point_field("z", 8U, sensor_msgs::msg::PointField::FLOAT32, 1U)};
   cloud.data.resize(static_cast<std::size_t>(cloud.row_step) * cloud.height);
 
   uint64_t valid_point_count = 0;
@@ -307,23 +326,23 @@ void StereoPointCloudNode::publish_status(
   const double coverage = last_total_points_ == 0U ? 0.0 :
     static_cast<double>(last_valid_points_) / static_cast<double>(last_total_points_);
   status.values = {
-    diagnostic_msgs::msg::KeyValue{"state", state},
-    diagnostic_msgs::msg::KeyValue{"detail", detail},
-    diagnostic_msgs::msg::KeyValue{"valid_points", as_string(last_valid_points_)},
-    diagnostic_msgs::msg::KeyValue{"total_points", as_string(last_total_points_)},
-    diagnostic_msgs::msg::KeyValue{"coverage", as_string(coverage)},
-    diagnostic_msgs::msg::KeyValue{"calibration_id", calibration_id_},
-    diagnostic_msgs::msg::KeyValue{"calibration_validated", calibration_validated_ ? "true" : "false"},
-    diagnostic_msgs::msg::KeyValue{"processing_ms", as_string(last_processing_ms_)},
-    diagnostic_msgs::msg::KeyValue{"processing_p95_ms", as_string(processing_p95_ms())},
-    diagnostic_msgs::msg::KeyValue{"received_depth", as_string(received_depth_)},
-    diagnostic_msgs::msg::KeyValue{"received_camera_info", as_string(received_info_)},
-    diagnostic_msgs::msg::KeyValue{"dropped_depth_timestamp", as_string(dropped_depth_)},
-    diagnostic_msgs::msg::KeyValue{"dropped_camera_info_timestamp", as_string(dropped_info_)},
-    diagnostic_msgs::msg::KeyValue{"queue_overflow_depth", as_string(queue_overflow_depth_)},
-    diagnostic_msgs::msg::KeyValue{"queue_overflow_camera_info", as_string(queue_overflow_info_)},
-    diagnostic_msgs::msg::KeyValue{"rejected_pairs", as_string(rejected_pairs_)},
-    diagnostic_msgs::msg::KeyValue{"published_clouds", as_string(published_clouds_)}};
+    make_key_value("state", state),
+    make_key_value("detail", detail),
+    make_key_value("valid_points", as_string(last_valid_points_)),
+    make_key_value("total_points", as_string(last_total_points_)),
+    make_key_value("coverage", as_string(coverage)),
+    make_key_value("calibration_id", calibration_id_),
+    make_key_value("calibration_validated", calibration_validated_ ? "true" : "false"),
+    make_key_value("processing_ms", as_string(last_processing_ms_)),
+    make_key_value("processing_p95_ms", as_string(processing_p95_ms())),
+    make_key_value("received_depth", as_string(received_depth_)),
+    make_key_value("received_camera_info", as_string(received_info_)),
+    make_key_value("dropped_depth_timestamp", as_string(dropped_depth_)),
+    make_key_value("dropped_camera_info_timestamp", as_string(dropped_info_)),
+    make_key_value("queue_overflow_depth", as_string(queue_overflow_depth_)),
+    make_key_value("queue_overflow_camera_info", as_string(queue_overflow_info_)),
+    make_key_value("rejected_pairs", as_string(rejected_pairs_)),
+    make_key_value("published_clouds", as_string(published_clouds_))};
   diagnostic_msgs::msg::DiagnosticArray array;
   array.header.stamp = now();
   array.status.push_back(std::move(status));

@@ -121,6 +121,10 @@ def test_pointcloud_defaults_and_launch_are_explicitly_debug_only() -> None:
     assert "debug_rviz_only" in node_content
     assert "calibration_validated=true requires a non-empty calibration_id" in node_content
     assert "sensor_msgs::msg::PointField::FLOAT32" in node_content
+    assert "make_point_field" in node_content
+    assert "make_key_value" in node_content
+    assert "sensor_msgs::msg::PointField{" not in node_content
+    assert "diagnostic_msgs::msg::KeyValue{" not in node_content
     assert "project_depth_pixel" in node_content
     assert '"no_valid_points"' in node_content
     assert "has_valid_points(valid_points)" in node_content
