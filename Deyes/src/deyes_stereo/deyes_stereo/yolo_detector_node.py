@@ -18,6 +18,7 @@ from .yolo_detector_contract import (
     filter_detections_by_allowed_class_ids,
     gate_target_detections,
     normalize_sha256,
+    normalize_tensorrt_dtype_name,
     parse_allowed_class_ids_json,
     TensorRTBinding,
     TensorRTEngineContract,
@@ -180,15 +181,6 @@ def trt_dtype_to_torch_dtype(trt_module: Any, torch_module: Any, dtype: Any) -> 
     if dtype not in mapping:
         raise RuntimeError(f"unsupported tensorrt dtype: {dtype}")
     return mapping[dtype]
-
-
-def tensorrt_dtype_name(dtype: Any) -> str:
-    """Map TensorRT's enum spelling to the portable contract spelling."""
-    normalized = str(dtype).strip().lower()
-    for name in ("float32", "float16", "int32", "int8", "bool"):
-        if normalized.endswith(name):
-            return name
-    return normalized
 
 
 def sha256_file(path: str) -> str:
@@ -442,7 +434,7 @@ class YoloDetectorNode(Node):
                         name=str(engine.get_binding_name(index)),
                         is_input=bool(engine.binding_is_input(index)),
                         shape=tuple(int(value) for value in engine.get_binding_shape(index)),
-                        dtype=tensorrt_dtype_name(engine.get_binding_dtype(index)),
+                        dtype=normalize_tensorrt_dtype_name(engine.get_binding_dtype(index)),
                     )
                 )
             contract = validate_tensorrt_yolov5_contract(

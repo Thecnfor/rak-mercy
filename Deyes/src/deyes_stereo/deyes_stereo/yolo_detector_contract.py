@@ -40,6 +40,26 @@ def normalize_sha256(value: str) -> str:
     return normalized
 
 
+def normalize_tensorrt_dtype_name(value: Any) -> str:
+    """Normalize TensorRT enum spellings (for example ``DataType.HALF``)."""
+    text = str(value).strip().lower()
+    aliases = {
+        "float": "float32",
+        "float32": "float32",
+        "fp32": "float32",
+        "half": "float16",
+        "float16": "float16",
+        "fp16": "float16",
+        "int32": "int32",
+        "int8": "int8",
+        "bool": "bool",
+    }
+    for suffix, normalized in aliases.items():
+        if text == suffix or text.endswith(f".{suffix}"):
+            return normalized
+    return text
+
+
 def validate_tensorrt_yolov5_contract(
     bindings: Sequence[TensorRTBinding], *, input_width: int, input_height: int, class_count: int
 ) -> TensorRTEngineContract:

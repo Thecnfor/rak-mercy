@@ -60,15 +60,49 @@ python3 export.py --weights runs/train/pen_yolov5s/weights/best.pt \
   --include onnx --imgsz 640 640 --simplify
 ```
 
-先以保留的 `test` 批次评估，再测试比赛场景中的笔。推荐同时报告 per-image precision、recall、mAP@0.5、漏检率和误检率，不只看训练集或连续帧验证集。
+固定姿态 pilot 只用于检查视场、曝光和采集链，不得进入任何 split。只有笔完整入画、姿态/摆放批次改变后的会话才可标注。双笔图每张写两行 `class_id=0` 标签。
+
+先以保留的 `test` 批次评估，再测试比赛场景中的笔。正式目标为 Precision 和 Recall 均 `>= 0.95`，并报告端到端 3D 候选成功率；不只看训练集或连续帧验证集。
 
 Jetson TensorRT engine 与设备、TensorRT/CUDA 版本绑定。将 ONNX 拷到 Jetson 后，必须用其 **本机 TensorRT 8.5** 构建，不提交 `.pt`、`.onnx` 或 `.engine` 到 Git：
 
 ```bash
 /usr/src/tensorrt/bin/trtexec \
   --onnx=/home/elephant/temp/deyes/models/pen/best.onnx \
-  --saveEngine=/home/elephant/temp/deyes/models/pen/best.trt \
+  --saveEngine=/home/elephant/temp/deyes/models/pen/best.engine \
   --fp16
 ```
 
 导出前后分别以同一批真实图做推理对比，并在目标 Jetson 上记录 TensorRT、CUDA、模型 SHA-256、输入尺寸和置信度/NMS 阈值。若输入包含 letterbox，标签和反投影坐标必须使用相同的缩放与 padding 规则。
+
+在模型目录（仓库外）建立 `model_manifest.json`，最少记录：`model_id`、`engine_sha256`、ONNX SHA-256、训练数据版本、Jetson/TensorRT/CUDA 版本、输入 `[1,3,640,640]`、输出 `[1,N,6]`、`class_names={"0":"pen"}`、阈值和创建时间。启动时必须把 `model_id`、engine SHA-256、类别数和双目标上限显式传给节点；缺少或不匹配会 fail-closed：
+
+```bash
+ros2 launch deyes_bringup imx219_stereo.launch.py \
+  enable_cuda_depth:=true \
+  enable_detector:=true \
+  detector_config:=/path/to/pen_detector.defaults.yaml \
+  detector_model_path:=/home/elephant/temp/deyes/models/pen/best.engine \
+  detector_model_id:=pen_yolov5n_v1 \
+  detector_expected_model_sha256:=<64-char-engine-sha256> \
+  detector_expected_class_count:=1 \
+  detector_expected_max_targets:=2 \
+  detector_image_topic:=/x1/stereo/debug/left_rect \
+  enable_object_fusion:=true
+```
+
+`/x1/detection/boxes` 中 1–2 个笔候选按从左到右稳定标记为 `target_00`、`target_01`。超过两个、IoU `>=0.80` 的疑似重复框、模型 SHA-256 不一致或 engine 输出不匹配时，节点会输出 `ambiguous` 并不给融合/自动抓取链候选。
+
+## 4. 持出集评估与 3D 候选证据
+
+在仓库外建立 JSONL：完整标注索引每行至少含 `image_id`、`batch_id`、`split`（`train`/`val`/`test`）和 `boxes`（`[x0,y0,x1,y1]` 列表）；同一 `batch_id` 只能属于一个 split。运行时推理记录仅覆盖 `test` 图片，且每行含同一 `model_id`、`model_sha256`、`detections` 和从融合节点记录的 `objects_3d`（每个成功对象有 `status:"ok"` 与 `bbox_xyxy`）。
+
+```bash
+PYTHONPATH=/home/elephant/deyes_ws/src/Deyes/src/deyes_stereo \
+python3 -m deyes_stereo.pen_evaluation \
+  --ground-truth /home/elephant/temp/deyes/datasets/pen/ground_truth_index.jsonl \
+  --predictions /home/elephant/temp/deyes/datasets/pen/test_runtime_predictions.jsonl \
+  --report /home/elephant/temp/deyes/reports/pen_test_report.json
+```
+
+该工具在批次泄漏、缺失 test 推理、混用模型身份或无效 bbox 时拒绝报告；输出 Precision、Recall 与按真值笔数统计的 `end_to_end_3d_candidate.success_rate`。

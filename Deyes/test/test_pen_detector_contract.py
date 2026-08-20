@@ -12,6 +12,7 @@ from deyes_stereo.yolo_detector_contract import (  # noqa: E402
     filter_detections_by_allowed_class_ids,
     gate_target_detections,
     normalize_sha256,
+    normalize_tensorrt_dtype_name,
     parse_allowed_class_ids_json,
     TensorRTBinding,
     validate_tensorrt_yolov5_contract,
@@ -126,6 +127,12 @@ def test_model_digest_is_mandatory_and_normalized() -> None:
             pass
         else:  # pragma: no cover
             raise AssertionError("invalid digest was accepted")
+
+
+def test_tensorrt_dtype_aliases_match_python_enum_spellings() -> None:
+    assert normalize_tensorrt_dtype_name("DataType.FLOAT") == "float32"
+    assert normalize_tensorrt_dtype_name("DataType.HALF") == "float16"
+    assert normalize_tensorrt_dtype_name("DataType.INT8") == "int8"
 
 
 def test_node_enforces_identity_and_runtime_shape_contract() -> None:
