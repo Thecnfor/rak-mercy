@@ -35,12 +35,12 @@ def _parse_one_pen_feature(feature: dict[str, Any]) -> dict[str, Any]:
 
 
 def parse_pen_features(payload: dict[str, Any]) -> list[dict[str, Any]]:
-    """Accept zero, one, or two explicitly identified pens; >2 fails closed."""
+    """Accept exactly one target pen; all multi-target scenes fail closed."""
     features = payload.get("features") if isinstance(payload.get("features"), list) else [payload]
     candidates = [item for item in features if isinstance(item, dict) and str(item.get("label") or item.get("class_name") or "") == "pen"]
     if not candidates:
         raise ValueError("waiting/no_target")
-    if len(candidates) > 2:
+    if len(candidates) > 1:
         raise ValueError("ambiguous_multi_target")
     parsed = [_parse_one_pen_feature(item) for item in candidates]
     if len({item["id"] for item in parsed}) != len(parsed):
@@ -174,7 +174,7 @@ def build_pen_candidate(
 def build_pen_candidates(
     payload: dict[str, Any], depth: np.ndarray, intrinsics: tuple[float, float, float, float], **kwargs: Any,
 ) -> dict[str, Any]:
-    """Batch contract for zero/one/two pens; never reduces two to one silently."""
+    """Single-target wrapper; kept batch-shaped for a stable consumer schema."""
     features = parse_pen_features(payload)
     candidates = [
         build_pen_candidate(

@@ -34,10 +34,15 @@ def test_pen_candidate_requires_mask_endpoints_and_table_plane():
         raise AssertionError("mask contract must be mandatory")
 
 
-def test_two_pen_features_are_retained_with_stable_target_ids():
+def test_two_pen_features_fail_closed_instead_of_selecting_one():
     second = {**_feature(), "id": "p2", "mask_pixels_px": [[u, 35] for u in range(20, 55)]}
     multiple = {"features": [_feature(), second]}
-    assert [item["id"] for item in parse_pen_features(multiple)] == ["p1", "p2"]
+    try:
+        parse_pen_features(multiple)
+    except ValueError as exc:
+        assert str(exc) == "ambiguous_multi_target"
+    else:
+        raise AssertionError("two targets must inhibit grasping")
 
 
 def test_no_target_and_more_than_two_targets_fail_closed():
@@ -59,12 +64,14 @@ def test_edge_truncation_or_incomplete_axis_is_never_executable():
     assert "grasp_point_base_m" not in result
 
 
-def test_two_distinguishable_pens_produce_two_debug_candidates():
+def test_batch_wrapper_reports_multi_target_without_candidates():
     depth = np.full((80, 80), .50, dtype=np.float32)
     depth[20:23, 20:55] = .515
     depth[35:38, 20:55] = .515
     second = {**_feature(), "id": "p2", "mask_pixels_px": [[u, y] for y in range(35, 38) for u in range(20, 55)], "axis_endpoints_px": [[20, 36], [54, 36]]}
-    result = build_pen_candidates({"features": [_feature(), second]}, depth, (100, 100, 40, 40), plane_payload=_plane(), rotation=None, translation=None, trusted_for_grasp=False)
-    assert result["candidate_count"] == 2
-    assert [item["target_id"] for item in result["candidates"]] == ["p1", "p2"]
-    assert result["trusted_for_grasp"] is False
+    try:
+        build_pen_candidates({"features": [_feature(), second]}, depth, (100, 100, 40, 40), plane_payload=_plane(), rotation=None, translation=None, trusted_for_grasp=False)
+    except ValueError as exc:
+        assert str(exc) == "ambiguous_multi_target"
+    else:
+        raise AssertionError("batch wrapper must not select either target")

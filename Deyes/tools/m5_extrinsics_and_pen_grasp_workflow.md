@@ -52,7 +52,7 @@ ros2 launch deyes_bringup validated_extrinsics_tf.launch.py \
 
 失败时该节点发布 `/x1/stereo/extrinsics_status` 的 `trusted_for_grasp:false`，不会广播 TF。
 
-## 两支笔的输入与输出契约
+## 当前单目标笔的输入与输出契约
 
 `pen_grasp` 不修改也不依赖具体 YOLO 实现。上游的检测/分割组件向 `/x1/detection/pen_features` 发布 JSON，使用显式 mask 像素和二维长轴端点：
 
@@ -63,10 +63,7 @@ ros2 launch deyes_bringup validated_extrinsics_tf.launch.py \
   "features": [
     {"id": "pen-left", "label": "pen", "confidence": 0.92, "axis_complete": true,
      "mask_pixels_px": [[120, 88], [121, 88]],
-     "axis_endpoints_px": [[116, 88], [198, 91]]},
-    {"id": "pen-right", "label": "pen", "confidence": 0.90, "axis_complete": true,
-     "mask_pixels_px": [[320, 170], [321, 170]],
-     "axis_endpoints_px": [[316, 170], [390, 172]]}
+     "axis_endpoints_px": [[116, 88], [198, 91]]}
   ]
 }
 ```
@@ -74,8 +71,8 @@ ros2 launch deyes_bringup validated_extrinsics_tf.launch.py \
 实际 `mask_pixels_px` 每支至少 12 点，且上游必须发送 `axis_complete: true`。节点以 mask 内深度的中值/MAD 稳健采样，并使用 `/x1/ground/plane` 的 RANSAC 桌面平面剔除桌面像素；再输出每支的 `target_id`、camera-frame 位置、轴、端点、40% 中段抓取区间及质量项。任何 mask 或轴端点进入图像边缘 `12px` 区，或 `axis_complete` 不为 true 时，输出 `target_visibility: edge_truncated/unknown_or_incomplete` 并关闭抓取。物理外参和双目标定均验证后，才增加同一候选的 `grasp_point_base_m`、`axis_base_unit`、`approach_normal_base_unit` 与 `grasp_interval_base_m`。
 
 - 0 支：`reason: waiting/no_target`；
-- 1 或 2 支：逐支保留候选和 `target_id`，以供后续分配左右臂；
-- 超过 2 支、重复 ID，或两候选 3D 中心相距小于 `30mm`：`ambiguous_multi_target` 或 `geometric_conflict_or_indistinguishable`，关闭全部 base-frame 抓取点。
+- 恰好 1 支：输出该 `target_id` 的候选；
+- 超过 1 支、重复 ID 或几何无法区分：`ambiguous_multi_target` 或 `geometric_conflict_or_indistinguishable`，关闭全部 base-frame 抓取点，绝不按置信度选择一支。
 
 启动（应同时启动 CUDA 深度、校正 CameraInfo 与 `ground_plane`）：
 
