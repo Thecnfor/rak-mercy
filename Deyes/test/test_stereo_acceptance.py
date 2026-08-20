@@ -15,7 +15,7 @@ from deyes_stereo.stereo_acceptance import (  # noqa: E402
     evaluate_truth_samples,
     percentile95,
 )
-from deyes_stereo.runtime_acceptance_monitor import _rate  # noqa: E402
+from deyes_stereo.runtime_acceptance_monitor import _counter_rate, _message_rate  # noqa: E402
 
 
 def samples(distance: float, error: float, count: int = 100) -> list[dict[str, object]]:
@@ -41,6 +41,7 @@ def valid_runtime_data() -> dict[str, object]:
         "center_roi_coverage_min": 0.85,
         "processing_overrun_sustained": False,
         "pair_diagnostics_observed": True,
+        "pair_diagnostics_counter_contiguous": True,
         "depth_status_observed": True,
         "depth_coverage_observed": True,
         "calibration_validated": True,
@@ -48,6 +49,7 @@ def valid_runtime_data() -> dict[str, object]:
         "points_status_observed": True,
         "pointcloud_status_always_validated": True,
         "pointcloud_calibration_identity_consistent": True,
+        "points_counter_monotonic": True,
         "rviz_manual_checks": {
             "flat_plane_has_no_obvious_warping_or_layering": True,
             "no_obvious_ghosting": True,
@@ -123,14 +125,17 @@ def test_runtime_cannot_pass_without_observed_diagnostics_or_consistent_pointclo
         "points_status_observed": False,
         "pointcloud_status_always_validated": False,
         "pointcloud_calibration_identity_consistent": False,
+        "pair_diagnostics_counter_contiguous": False,
     })
     report = evaluate_runtime_metrics(metrics)
     assert not report["overall_validated"]
     assert "pair_diagnostics_observed" in report["reasons"]
     assert "points_status_observed" in report["reasons"]
     assert "pointcloud_calibration_identity_consistent" in report["reasons"]
+    assert "pair_diagnostics_counter_contiguous" in report["reasons"]
 
 
-def test_rate_uses_the_entire_observation_window_so_a_stopped_stream_fails() -> None:
+def test_counter_and_status_rates_use_the_entire_window_so_stopped_streams_fail() -> None:
     # 30 Hz for only the first five minutes of a ten-minute acceptance run.
-    assert _rate([float(index) / 30.0 for index in range(30 * 300)], 600.0) == 15.0
+    assert _counter_rate(10, 10 + 30 * 300, 600.0) == 15.0
+    assert _message_rate(14 * 300, 600.0) == 7.0

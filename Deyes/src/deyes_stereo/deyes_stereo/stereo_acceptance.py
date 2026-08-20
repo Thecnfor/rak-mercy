@@ -179,7 +179,8 @@ def evaluate_runtime_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "processing_overrun_sustained", "calibration_validated", "calibration_id",
         "rviz_manual_checks", "pair_diagnostics_observed", "depth_status_observed",
         "depth_coverage_observed", "points_status_observed", "pointcloud_status_always_validated",
-        "pointcloud_calibration_identity_consistent",
+        "pointcloud_calibration_identity_consistent", "pair_diagnostics_counter_contiguous",
+        "points_counter_monotonic",
     )
     missing = [name for name in required if name not in metrics]
     if missing:
@@ -195,6 +196,8 @@ def evaluate_runtime_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
     sustained = _as_bool(metrics["processing_overrun_sustained"], "processing_overrun_sustained")
     calibration_validated = _as_bool(metrics["calibration_validated"], "calibration_validated")
     pair_diagnostics_observed = _as_bool(metrics["pair_diagnostics_observed"], "pair_diagnostics_observed")
+    pair_diagnostics_counter_contiguous = _as_bool(
+        metrics["pair_diagnostics_counter_contiguous"], "pair_diagnostics_counter_contiguous")
     depth_status_observed = _as_bool(metrics["depth_status_observed"], "depth_status_observed")
     depth_coverage_observed = _as_bool(metrics["depth_coverage_observed"], "depth_coverage_observed")
     points_status_observed = _as_bool(metrics["points_status_observed"], "points_status_observed")
@@ -202,6 +205,7 @@ def evaluate_runtime_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
         metrics["pointcloud_status_always_validated"], "pointcloud_status_always_validated")
     pointcloud_identity_consistent = _as_bool(
         metrics["pointcloud_calibration_identity_consistent"], "pointcloud_calibration_identity_consistent")
+    points_counter_monotonic = _as_bool(metrics["points_counter_monotonic"], "points_counter_monotonic")
     calibration_id = metrics["calibration_id"]
     if not isinstance(calibration_id, str):
         raise AcceptanceInputError("invalid_calibration_id")
@@ -213,6 +217,7 @@ def evaluate_runtime_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "duration_at_least_600s": duration >= MIN_RUNTIME_DURATION_SEC,
         "capture_failures_zero": failures == 0.0,
         "pair_diagnostics_observed": pair_diagnostics_observed,
+        "pair_diagnostics_counter_contiguous": pair_diagnostics_counter_contiguous,
         "every_static_pair_at_most_10ms": skew <= 10.0,
         "left_image_at_least_28hz": left_hz >= 28.0,
         "right_image_at_least_28hz": right_hz >= 28.0,
@@ -224,6 +229,7 @@ def evaluate_runtime_metrics(metrics: Mapping[str, Any]) -> dict[str, Any]:
         "no_sustained_processing_overrun": not sustained,
         "physical_calibration_validated": calibration_validated and calibration_id.strip() not in {"", "unassigned"},
         "points_status_observed": points_status_observed,
+        "points_counter_monotonic": points_counter_monotonic,
         "pointcloud_status_always_validated": pointcloud_status_always_validated,
         "pointcloud_calibration_identity_consistent": pointcloud_identity_consistent,
         **{f"rviz_{name}": passed for name, passed in rviz_checks.items()},

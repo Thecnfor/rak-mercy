@@ -16,9 +16,20 @@ from typing import Sequence
 from .stereo_acceptance import AcceptanceInputError, _output_dir, evaluate_runtime_metrics, write_report
 
 
-def _rate(times: list[float], observation_duration_sec: float) -> float:
-    """Use the whole acceptance interval so a stream that stops cannot pass."""
-    return len(times) / observation_duration_sec if observation_duration_sec > 0.0 else 0.0
+def _counter_rate(first: int | None, last: int | None, observation_duration_sec: float) -> float:
+    """Rate from a producer counter over the complete acceptance interval.
+
+    Dividing by the full interval, rather than the span between received
+    diagnostics, detects a source that stops half way through the run.
+    """
+    if first is None or last is None or last < first or observation_duration_sec <= 0.0:
+        return 0.0
+    return (last - first) / observation_duration_sec
+
+
+def _message_rate(message_count: int, observation_duration_sec: float) -> float:
+    """Use only small state messages; never deserialize image/PointCloud payloads."""
+    return message_count / observation_duration_sec if observation_duration_sec > 0.0 else 0.0
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -35,11 +46,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(str(exc))
     try:
         import rclpy
+        from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+        from rclpy.executors import MultiThreadedExecutor
         from rclpy.node import Node
         from diagnostic_msgs.msg import DiagnosticArray
-        from sensor_msgs.msg import Image, PointCloud2
         from std_msgs.msg import String
-        from rclpy.qos import qos_profile_sensor_data
     except ImportError as exc:  # Allows pure tests and reports on development PCs.
         parser.error(f"ROS 2 runtime unavailable: {exc}")
 
@@ -47,16 +58,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         def __init__(self) -> None:
             super().__init__("stereo_runtime_acceptance_monitor")
             self.started = time.monotonic()
-            self.left: list[float] = []
-            self.right: list[float] = []
-            self.depth: list[float] = []
-            self.points: list[float] = []
             self.max_skew_ms: float | None = None
             self.pair_diagnostics_observed = False
+            self.pair_diagnostics_counter_contiguous = True
+            self.capture_first_published_pairs: int | None = None
+            self.capture_last_published_pairs: int | None = None
+            self.capture_drop_skew = 0
+            self.capture_drop_stale = 0
+            self.capture_wait_pair = 0
             self.capture_failures = 0.0
             self.coverage: list[float] = []
             self.coverage_observed = False
             self.depth_status_observed = False
+            self.depth_published_messages = 0
             self.overrun_started: float | None = None
             self.max_overrun_streak_sec = 0.0
             self.overrun_events = 0
@@ -66,40 +80,69 @@ def main(argv: Sequence[str] | None = None) -> int:
             self.pointcloud_status_always_validated = True
             self.pointcloud_calibration_identity_consistent = True
             self._pointcloud_calibration_identity: str | None = None
+            self.points_first_published_clouds: int | None = None
+            self.points_last_published_clouds: int | None = None
+            self.points_counter_monotonic = True
             self.finished = False
-            # Camera/depth/point-cloud publishers use rclcpp::SensorDataQoS
-            # (BEST_EFFORT + VOLATILE); the integer depth shorthand creates a
-            # reliable subscription and is incompatible with those streams.
-            sensor_qos = qos_profile_sensor_data
+            # Do not subscribe to the four large image/cloud payload topics.
+            # Python message deserialization itself was observed to make the old
+            # single-threaded collector undercount healthy 30/14 Hz publishers.
+            # These source-owned diagnostic/state topics carry the authoritative
+            # producer counters and remain lightweight on ROS 2 Galactic.
+            self._pair_group = MutuallyExclusiveCallbackGroup()
+            self._points_group = MutuallyExclusiveCallbackGroup()
+            self._depth_group = MutuallyExclusiveCallbackGroup()
+            self._timer_group = MutuallyExclusiveCallbackGroup()
             self.create_subscription(
-                Image, "/x1/left_camera/image_raw", lambda _: self.left.append(time.monotonic()), sensor_qos
-            )
+                DiagnosticArray, "/x1/stereo/pair_diagnostics", self.pair_diagnostics, 20,
+                callback_group=self._pair_group)
             self.create_subscription(
-                Image, "/x1/right_camera/image_raw", lambda _: self.right.append(time.monotonic()), sensor_qos
-            )
+                DiagnosticArray, "/x1/stereo/points_status", self.points_status, 20,
+                callback_group=self._points_group)
             self.create_subscription(
-                Image, "/x1/stereo/depth", lambda _: self.depth.append(time.monotonic()), sensor_qos
-            )
+                String, "/cuda_stereo_depth_node/status", self.depth_status, 20,
+                callback_group=self._depth_group)
             self.create_subscription(
-                PointCloud2, "/x1/stereo/points", lambda _: self.points.append(time.monotonic()), sensor_qos
-            )
-            self.create_subscription(DiagnosticArray, "/x1/stereo/pair_diagnostics", self.pair_diagnostics, 20)
-            self.create_subscription(DiagnosticArray, "/x1/stereo/points_status", self.points_status, 20)
-            self.create_subscription(String, "/cuda_stereo_depth_node/status", self.depth_status, 20)
-            self.create_subscription(String, "/cuda_stereo_depth_node/status_detail", self.depth_detail, 20)
-            self.timer = self.create_timer(1.0, self.finish_if_due)
+                String, "/cuda_stereo_depth_node/status_detail", self.depth_detail, 20,
+                callback_group=self._depth_group)
+            self.timer = self.create_timer(1.0, self.finish_if_due, callback_group=self._timer_group)
 
         def pair_diagnostics(self, message: DiagnosticArray) -> None:
             for status in message.status:
                 values = {item.key: item.value for item in status.values}
-                if "current_skew_ms" in values:
+                try:
+                    published_pairs = int(values["published_pairs"])
+                except (KeyError, ValueError):
+                    continue
+                if self.capture_first_published_pairs is None:
+                    self.capture_first_published_pairs = published_pairs
+                if self.capture_last_published_pairs is not None:
+                    delta = published_pairs - self.capture_last_published_pairs
+                    # current_skew_ms describes the last accepted pair only when
+                    # exactly one new pair was published. A rejected candidate
+                    # may otherwise report a large skew and must not taint the
+                    # accepted-pair <=10ms gate.
+                    if delta not in (0, 1):
+                        self.pair_diagnostics_counter_contiguous = False
+                if self.capture_last_published_pairs is None or published_pairs > self.capture_last_published_pairs:
+                    if "current_skew_ms" in values and self.capture_last_published_pairs is not None:
+                        try:
+                            skew = float(values["current_skew_ms"])
+                            if skew >= 0.0:
+                                self.pair_diagnostics_observed = True
+                                self.max_skew_ms = skew if self.max_skew_ms is None else max(self.max_skew_ms, skew)
+                        except ValueError:
+                            self.pair_diagnostics_counter_contiguous = False
+                self.capture_last_published_pairs = published_pairs
+                for key, attribute in (
+                    ("drop_skew", "capture_drop_skew"),
+                    ("drop_stale", "capture_drop_stale"),
+                    ("wait_pair", "capture_wait_pair"),
+                ):
                     try:
-                        skew = float(values["current_skew_ms"])
-                        if skew >= 0.0:
-                            self.pair_diagnostics_observed = True
-                            self.max_skew_ms = skew if self.max_skew_ms is None else max(self.max_skew_ms, skew)
+                        setattr(self, attribute, max(getattr(self, attribute), int(values.get(key, "0"))))
                     except ValueError:
-                        pass
+                        self.pair_diagnostics_counter_contiguous = False
                 for key in ("left_failures", "right_failures"):
                     try:
                         self.capture_failures = max(self.capture_failures, float(values.get(key, "0")))
@@ -109,6 +152,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         def depth_status(self, message: String) -> None:
             now = time.monotonic()
             self.depth_status_observed = True
+            if message.data in {"ok", "processing_overrun"}:
+                self.depth_published_messages += 1
             if message.data == "processing_overrun":
                 if self.overrun_started is None:
                     self.overrun_started = now
@@ -122,9 +167,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 values = {item.key: item.value for item in status.values}
                 raw_validated = values.get("calibration_validated")
                 calibration_id = values.get("calibration_id")
-                if raw_validated is None or calibration_id is None:
+                raw_published_clouds = values.get("published_clouds")
+                if raw_validated is None or calibration_id is None or raw_published_clouds is None:
+                    continue
+                try:
+                    published_clouds = int(raw_published_clouds)
+                except ValueError:
+                    self.points_counter_monotonic = False
                     continue
                 self.points_status_observed = True
+                if self.points_first_published_clouds is None:
+                    self.points_first_published_clouds = published_clouds
+                if self.points_last_published_clouds is not None and published_clouds < self.points_last_published_clouds:
+                    self.points_counter_monotonic = False
+                self.points_last_published_clouds = published_clouds
                 self.calibration_validated = raw_validated.strip().lower() == "true"
                 self.calibration_id = calibration_id
                 if not self.calibration_validated or calibration_id.strip() in {"", "unassigned"}:
@@ -165,10 +221,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "capture_failures": self.capture_failures,
                 "pair_max_skew_ms": self.max_skew_ms if self.max_skew_ms is not None else 0.0,
                 "pair_diagnostics_observed": self.pair_diagnostics_observed,
-                "left_image_hz": _rate(self.left, observation_duration),
-                "right_image_hz": _rate(self.right, observation_duration),
-                "depth_hz": _rate(self.depth, observation_duration),
-                "points_hz": _rate(self.points, observation_duration),
+                "pair_diagnostics_counter_contiguous": self.pair_diagnostics_counter_contiguous,
+                "capture_published_pairs_delta": (
+                    (self.capture_last_published_pairs or 0) - (self.capture_first_published_pairs or 0)),
+                "capture_drop_skew": self.capture_drop_skew,
+                "capture_drop_stale": self.capture_drop_stale,
+                "capture_wait_pair": self.capture_wait_pair,
+                "left_image_hz": _counter_rate(
+                    self.capture_first_published_pairs, self.capture_last_published_pairs, observation_duration),
+                "right_image_hz": _counter_rate(
+                    self.capture_first_published_pairs, self.capture_last_published_pairs, observation_duration),
+                "depth_hz": _message_rate(self.depth_published_messages, observation_duration),
+                "points_hz": _counter_rate(
+                    self.points_first_published_clouds, self.points_last_published_clouds, observation_duration),
+                "points_published_clouds_delta": (
+                    (self.points_last_published_clouds or 0) - (self.points_first_published_clouds or 0)),
+                "points_counter_monotonic": self.points_counter_monotonic,
                 "center_roi_coverage_min": min(self.coverage) if self.coverage else 0.0,
                 "depth_status_observed": self.depth_status_observed,
                 "depth_coverage_observed": self.coverage_observed,
@@ -196,10 +264,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     rclpy.init(args=ros_args)
     collector = RuntimeCollector()
+    executor = MultiThreadedExecutor(num_threads=4)
+    executor.add_node(collector)
     try:
         while rclpy.ok() and not collector.finished:
-            rclpy.spin_once(collector, timeout_sec=1.0)
+            executor.spin_once(timeout_sec=1.0)
     finally:
+        executor.shutdown()
         collector.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -1,5 +1,4 @@
 from pathlib import Path
-import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,28 +7,16 @@ MONITOR_PATH = (
 )
 
 
-def test_runtime_monitor_uses_sensor_qos_for_sensor_streams() -> None:
+def test_runtime_monitor_avoids_sensor_payload_subscriptions_for_rate_measurement() -> None:
     content = MONITOR_PATH.read_text(encoding="utf-8")
 
-    assert "from rclpy.qos import qos_profile_sensor_data" in content
-    assert "sensor_qos = qos_profile_sensor_data" in content
-    assert '"/x1/left_camera/image_raw"' in content
-    assert '"/x1/right_camera/image_raw"' in content
-    assert '"/x1/stereo/depth"' in content
-    assert '"/x1/stereo/points"' in content
-
-    # These four subscriptions must not regress to the integer depth shorthand.
-    sensor_topics = (
-        '"/x1/left_camera/image_raw"',
-        '"/x1/right_camera/image_raw"',
-        '"/x1/stereo/depth"',
-        '"/x1/stereo/points"',
-    )
-    for topic in sensor_topics:
-        pattern = rf"create_subscription\(.*?{re.escape(topic)}.*?sensor_qos\s*\n\s*\)"
-        assert re.search(pattern, content, flags=re.DOTALL)
-
-    assert content.count("sensor_qos\n            )") == 4
+    assert "qos_profile_sensor_data" not in content
+    assert '"/x1/left_camera/image_raw"' not in content
+    assert '"/x1/right_camera/image_raw"' not in content
+    assert '"/x1/stereo/depth"' not in content
+    assert '"/x1/stereo/points"' not in content
+    assert "published_pairs" in content
+    assert "published_clouds" in content
 
 
 def test_runtime_monitor_keeps_status_topics_on_explicit_reliable_depth() -> None:

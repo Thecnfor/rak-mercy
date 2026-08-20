@@ -17,6 +17,8 @@ Create the external evidence directory first:
   ros2 bag record -o ${SESSION_DIR}/rosbag/runtime_10min /x1/left_camera/image_raw /x1/right_camera/image_raw /x1/stereo/depth /x1/stereo/points /x1/stereo/points_status /x1/stereo/pair_diagnostics /cuda_stereo_depth_node/status /cuda_stereo_depth_node/status_detail
   ros2 run deyes_stereo runtime_acceptance_monitor --output-dir ${SESSION_DIR}/reports --duration-sec 600 --rviz-check-file ${SESSION_DIR}/rviz_checks.json
 
+`runtime_acceptance_monitor` intentionally does not deserialize the large image/depth/PointCloud2 payloads. It derives left/right and point-cloud rates from formal producer counters, and depth rate from the CUDA node's lightweight successful-publish states. Rates are divided by the full 600-second observation interval, so a stream that stops mid-run still fails.
+
 3. Make truth_samples.csv with columns truth_m,measured_m,valid,plane_residual_m. For EACH of 0.30, 0.50, 0.80 and 1.00 m include at least 100 unfiltered frame samples. Measure from the left optical centre to the reference plane.
   ros2 run deyes_stereo stereo_acceptance truth --input ${SESSION_DIR}/truth_samples.csv --output-dir ${SESSION_DIR}/reports
 
