@@ -97,7 +97,8 @@ RViz 调试，状态和数据都会标记 `dynamic_table_plane_camera_relative_o
 `trusted_for_grasp:false`。法向突变时节点只发布 `degraded` 的旧平面回退，
 `valid_for_table_removal:false`；笔抓取节点将拒绝该帧。
 
-深度、校正 CameraInfo 和动态平面是异步话题。运行节点只在**相同 stamp** 的
-`depth + CameraInfo` 成对后缓存该帧，再等待相同 stamp 的平面；缓存为 8 项、0.50 秒，
-超时或乱序后未能精确配对的条目会被丢弃。此策略不使用近似时间窗，因此深度高频而
-平面低频时，平面仍能消费自己生成所依据的深度帧，绝不会误配最新深度。
+深度、校正 CameraInfo、动态平面和 pen feature 是异步话题。运行节点只在**相同 stamp** 的
+`depth + CameraInfo` 成对后缓存该帧，再等待相同 stamp 的平面；feature 也必须与该 depth
+帧严格同 stamp。缓存为 8 项、0.50 秒，超时或乱序后未能精确配对的条目会被丢弃。此策略
+不使用近似时间窗，因此深度高频而平面低频时，平面仍能消费自己生成所依据的深度帧，绝不
+会误配最新深度。

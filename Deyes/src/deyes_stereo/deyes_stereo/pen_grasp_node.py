@@ -20,7 +20,7 @@ from .ground_plane_contract import (
     validate_dynamic_plane_for_depth,
     validate_rectified_depth_pair,
 )
-from .pen_grasp_contract import build_pen_candidates
+from .pen_grasp_contract import build_pen_candidates, feature_matches_depth_stamp, pen_feature_stamp_ns
 from .stamp_pairing import BoundedStampCache, ExactStampPairCache
 
 
@@ -45,7 +45,7 @@ class PenGraspNode(Node):
             "pen_features_topic": "/x1/detection/pen_features", "depth_topic": "/x1/stereo/depth",
             "camera_info_topic": "/x1/stereo/left/camera_info_rect", "plane_topic": "/x1/ground/plane",
             "output_topic": "/x1/grasp/pen_candidates", "status_topic": "/x1/grasp/pen_candidates_status",
-            "extrinsics_path": "", "stereo_calibration_path": "", "max_feature_age_sec": .15,
+            "extrinsics_path": "", "stereo_calibration_path": "",
             "min_depth_m": .20, "max_depth_m": 1.00, "min_plane_clearance_m": .004,
             "edge_margin_px": 12, "publish_period_sec": .08, "sync_cache_capacity": 8,
             "sync_cache_max_age_sec": .50,
@@ -58,9 +58,8 @@ class PenGraspNode(Node):
         self._unmatched_pairs = BoundedStampCache(cache_capacity, cache_age_ns)
         self._unmatched_planes = BoundedStampCache(cache_capacity, cache_age_ns)
         self._ready = BoundedStampCache(cache_capacity, cache_age_ns)
-        self._feature: dict[str, Any] | None = None
-        self._feature_stamp_ns = 0
-        self._max_feature_age_ns = int(float(self.get_parameter("max_feature_age_sec").value) * 1e9)
+        self._unmatched_ready = BoundedStampCache(cache_capacity, cache_age_ns)
+        self._features = BoundedStampCache(cache_capacity, cache_age_ns)
         self._trust = self._load_trust()
         self._output = self.create_publisher(String, str(self.get_parameter("output_topic").value), qos_profile_sensor_data)
         self._status_pub = self.create_publisher(String, str(self.get_parameter("status_topic").value), qos_profile_sensor_data)
@@ -86,10 +85,22 @@ class PenGraspNode(Node):
 
     def _on_feature(self, msg: String) -> None:
         try:
-            self._feature = json.loads(msg.data)
-            self._feature_stamp_ns = int(self._feature.get("stamp_sec", 0) or 0) * 1_000_000_000 + int(self._feature.get("stamp_nanosec", 0) or 0)
+            feature = json.loads(msg.data)
+            stamp_ns = pen_feature_stamp_ns(feature)
+            if stamp_ns <= 0:
+                raise ValueError("pen_feature_stamp_missing_or_invalid")
         except (json.JSONDecodeError, AttributeError, TypeError) as exc:
             self._status("warn", trusted_for_grasp=False, reason=f"invalid_pen_feature_json:{exc}")
+            return
+        except ValueError as exc:
+            self._status("warn", trusted_for_grasp=False, reason=str(exc))
+            return
+        now_ns = time.monotonic_ns()
+        ready = self._unmatched_ready.pop(stamp_ns, now_ns)
+        if ready is None:
+            self._features.put(stamp_ns, feature, now_ns)
+        else:
+            self._build_and_publish(stamp_ns, *ready, feature)
 
     def _on_depth(self, msg: Image) -> None:
         try:
@@ -141,14 +152,21 @@ class PenGraspNode(Node):
         self._depth_info_pairs.expire(now_ns)
         self._unmatched_pairs.expire(now_ns)
         self._unmatched_planes.expire(now_ns)
-        if self._feature is None:
-            self._status("waiting", trusted_for_grasp=False, reason="waiting_for_pen_feature")
-            return
+        self._unmatched_ready.expire(now_ns)
+        self._features.expire(now_ns)
         ready = self._ready.pop_oldest(now_ns)
         if ready is None:
             return
         stamp_ns, (frame, info, plane) = ready
-        if self._feature_stamp_ns and abs(self._feature_stamp_ns - stamp_ns) > self._max_feature_age_ns:
+        feature = self._features.pop(stamp_ns, now_ns)
+        if feature is None:
+            self._unmatched_ready.put(stamp_ns, (frame, info, plane), now_ns)
+            self._status("waiting", trusted_for_grasp=False, reason="waiting_for_exact_stamp_pen_feature")
+            return
+        self._build_and_publish(stamp_ns, frame, info, plane, feature)
+
+    def _build_and_publish(self, stamp_ns: int, frame: DepthSample, info: CameraInfo, plane: dict[str, Any], feature: dict[str, Any]) -> None:
+        if not feature_matches_depth_stamp(feature, stamp_ns):
             self._status("warn", trusted_for_grasp=False, reason="pen_feature_depth_timestamp_mismatch")
             return
         plane_contract = validate_dynamic_plane_for_depth(plane, depth_stamp_ns=stamp_ns, depth_frame_id=frame.frame_id)
@@ -157,7 +175,7 @@ class PenGraspNode(Node):
             return
         try:
             result = build_pen_candidates(
-                self._feature, frame.depth, rectified_intrinsics(info.p), plane_payload=plane,
+                feature, frame.depth, rectified_intrinsics(info.p), plane_payload=plane,
                 rotation=self._trust.rotation, translation=self._trust.translation, trusted_for_grasp=self._trust.valid,
                 min_depth_m=float(self.get_parameter("min_depth_m").value), max_depth_m=float(self.get_parameter("max_depth_m").value),
                 min_plane_clearance_m=float(self.get_parameter("min_plane_clearance_m").value), edge_margin_px=int(self.get_parameter("edge_margin_px").value),

@@ -1,6 +1,6 @@
 import numpy as np
 
-from deyes_stereo.pen_grasp_contract import build_pen_candidate, build_pen_candidates, parse_pen_features
+from deyes_stereo.pen_grasp_contract import build_pen_candidate, build_pen_candidates, feature_matches_depth_stamp, parse_pen_features, pen_feature_stamp_ns
 
 
 def _feature():
@@ -75,3 +75,13 @@ def test_batch_wrapper_reports_multi_target_without_candidates():
         assert str(exc) == "ambiguous_multi_target"
     else:
         raise AssertionError("batch wrapper must not select either target")
+
+
+def test_pen_feature_must_have_the_exact_depth_stamp():
+    feature = {"stamp_sec": 12, "stamp_nanosec": 34}
+    exact = 12_000_000_034
+    assert feature_matches_depth_stamp(feature, exact)
+    assert not feature_matches_depth_stamp(feature, exact + 1)
+    assert not feature_matches_depth_stamp({"stamp_sec": 0, "stamp_nanosec": 0}, exact)
+    assert pen_feature_stamp_ns(feature) == exact
+    assert pen_feature_stamp_ns({"stamp_sec": "bad"}) == 0

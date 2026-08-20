@@ -7,6 +7,20 @@ from typing import Any
 import numpy as np
 
 
+def pen_feature_stamp_ns(feature_payload: dict[str, Any]) -> int:
+    """Return a pen-feature stamp, or zero when it is absent/malformed."""
+    try:
+        return int(feature_payload.get("stamp_sec", 0) or 0) * 1_000_000_000 + int(feature_payload.get("stamp_nanosec", 0) or 0)
+    except (AttributeError, TypeError, ValueError):
+        return 0
+
+
+def feature_matches_depth_stamp(feature_payload: dict[str, Any], depth_stamp_ns: int) -> bool:
+    """A 2D feature is usable only with the exact depth frame that produced it."""
+    feature_stamp_ns = pen_feature_stamp_ns(feature_payload)
+    return feature_stamp_ns > 0 and feature_stamp_ns == depth_stamp_ns
+
+
 def _point(value: Any, name: str, size: int = 2) -> np.ndarray:
     point = np.asarray(value, dtype=np.float64).reshape(-1)
     if point.size != size or not np.all(np.isfinite(point)):
