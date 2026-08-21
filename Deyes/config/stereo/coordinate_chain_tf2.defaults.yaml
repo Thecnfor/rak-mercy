@@ -1,0 +1,18 @@
+coordinate_chain_tf2_node:
+  ros__parameters:
+    # The gateway transforms only through the shared ROS2 TF2 tree.  It has no
+    # matrix/fallback parameter and never creates arm, gripper, or serial clients.
+    request_topic: "/x1/coordinate_chain/request"
+    result_topic: "/x1/coordinate_chain/result"
+    status_topic: "/x1/coordinate_chain/status"
+    extrinsics_status_topic: "/x1/stereo/extrinsics_status"
+    transform_timeout_sec: 0.05
+
+tf_chain_audit_node:
+  ros__parameters:
+    base_frame: "base_link"
+    camera_frame: "left_camera_optical_frame"
+    # Populate only with frame IDs printed by the official Mercury X1 URDF/TF.
+    # Expected entries: left/right arm-base, tool/TCP, and gripper frames.
+    required_end_effector_frames: []
+    status_topic: "/x1/coordinate_chain/tf_audit"

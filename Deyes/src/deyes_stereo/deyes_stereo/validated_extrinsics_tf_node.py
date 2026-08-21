@@ -39,10 +39,10 @@ class ValidatedExtrinsicsTFNode(Node):
             stereo = load_yaml_document(str(self.get_parameter("stereo_calibration_path").value))
             result = validate_extrinsics(extrinsics, stereo_document=stereo)
         except (OSError, ValueError) as exc:
-            self._status("invalid", trusted_for_grasp=False, reasons=[str(exc)])
+            self._status("invalid", trusted_for_grasp=False, physical_validated=False, tf_published=False, reasons=[str(exc)])
             return
         if not result.valid or result.rotation is None or result.translation is None:
-            self._status("invalid", trusted_for_grasp=False, calibration_id=result.calibration_id, reasons=list(result.reasons))
+            self._status("invalid", trusted_for_grasp=False, physical_validated=False, tf_published=False, calibration_id=result.calibration_id, reasons=list(result.reasons))
             return
         transform = TransformStamped()
         transform.header.stamp = self.get_clock().now().to_msg()
@@ -52,7 +52,7 @@ class ValidatedExtrinsicsTFNode(Node):
         quaternion = extrinsics["quaternion_xyzw"]
         transform.transform.rotation.x, transform.transform.rotation.y, transform.transform.rotation.z, transform.transform.rotation.w = [float(v) for v in quaternion]
         self._broadcaster.sendTransform(transform)
-        self._status("ok", trusted_for_grasp=True, calibration_id=result.calibration_id, stereo_calibration_id=extrinsics["stereo_calibration_id"])
+        self._status("ok", trusted_for_grasp=True, physical_validated=True, tf_published=True, calibration_id=result.calibration_id, stereo_calibration_id=extrinsics["stereo_calibration_id"])
 
 
 def main(args: Any = None) -> None:
