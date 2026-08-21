@@ -36,5 +36,7 @@ def build_coordinate_chain_requests(candidate_payload: Any, *, target_frame: str
         except ValueError as exc:
             return {"state": "rejected", "reason": str(exc), "requests": [], "published": False}
         request["candidate_id"] = str(candidate.get("target_id") or candidate.get("id") or "")
+        if not request["candidate_id"]:
+            return {"state": "rejected", "reason": "camera_candidate_id_missing", "requests": [], "published": False}
         requests.append(request)
     return {"state": "ready", "reason": "ok", "requests": requests, "published": bool(requests)}

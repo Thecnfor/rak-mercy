@@ -58,7 +58,9 @@ class CoordinateChainTF2Node(Node):
             transform = self._buffer.lookup_transform(request["target_frame"], request["source_frame"], stamp, timeout=Duration(seconds=float(self.get_parameter("transform_timeout_sec").value)))
             q, t = transform.transform.rotation, transform.transform.translation
             result = transform_request(request, np.asarray([[1 - 2*(q.y*q.y + q.z*q.z), 2*(q.x*q.y - q.z*q.w), 2*(q.x*q.z + q.y*q.w)], [2*(q.x*q.y + q.z*q.w), 1 - 2*(q.x*q.x + q.z*q.z), 2*(q.y*q.z - q.x*q.w)], [2*(q.x*q.z - q.y*q.w), 2*(q.y*q.z + q.x*q.w), 1 - 2*(q.x*q.x + q.y*q.y)]]), np.asarray([t.x, t.y, t.z]), tf_quaternion_xyzw=[q.x, q.y, q.z, q.w])
-            result.update({"trusted_for_execution": True, "calibration_id": self._trust.get("calibration_id", "")})
+            # Preserve the bridge identity: an execution admission must prove
+            # that its dry-run plan is for this exact transformed observation.
+            result.update({"candidate_id": str(raw.get("candidate_id") or ""), "trusted_for_execution": True, "calibration_id": self._trust.get("calibration_id", "")})
             self._publish(self._result, result); self._publish(self._status, {"level": "ok", "trusted_for_execution": True, "target_frame": request["target_frame"]})
         except (ValueError, TransformException, json.JSONDecodeError) as exc:
             self._publish(self._status, {"level": "invalid", "trusted_for_execution": False, "reason": str(exc)})

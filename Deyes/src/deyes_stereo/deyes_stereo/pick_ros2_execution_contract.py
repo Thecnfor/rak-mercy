@@ -50,6 +50,10 @@ def validate_execution_admission(coordinate_result: Any, plan: Any, gates: LiveE
         return False, "coordinate_result_frame_must_be_base_link"
     if not isinstance(plan, dict) or plan.get("state") != "dry_run_ready" or plan.get("commands_emitted") is not False:
         return False, "dry_run_plan_invalid"
+    if str(coordinate_result.get("candidate_id") or "") != str(plan.get("target_id") or ""):
+        return False, "coordinate_plan_target_mismatch"
+    if int(coordinate_result.get("stamp_ns", -1) or -1) != int(plan.get("candidate_stamp_ns", -2) or -2):
+        return False, "coordinate_plan_stamp_mismatch"
     if not gates.action_server_available:
         return False, "follow_joint_trajectory_server_unavailable"
     if not _joint_state_fresh(gates):
