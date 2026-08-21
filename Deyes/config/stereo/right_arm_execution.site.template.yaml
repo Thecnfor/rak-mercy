@@ -1,0 +1,17 @@
+# Repository template only. Equal/empty values deliberately prevent live motion.
+validated: false
+arm_side: right
+serial_port: /dev/right_arm
+joint_min_deg: [0, 0, 0, 0, 0, 0]
+joint_max_deg: [0, 0, 0, 0, 0, 0]
+workspace_min_base_m: [0, 0, 0]
+workspace_max_base_m: [0, 0, 0]
+max_cartesian_speed_m_s: 0.02
+max_tracking_error_m: 0.01
+max_feedback_gap_sec: 0.25
+vendor_speed: 5
+gripper_open_value: 100
+gripper_closed_value: 0
+gripper_speed: 10
+gripper_direction_validated: false
+orientation_convention_validated: false

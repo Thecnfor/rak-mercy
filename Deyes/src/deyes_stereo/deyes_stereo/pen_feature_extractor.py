@@ -31,10 +31,16 @@ def detection_stamp_ns(payload: dict[str, Any]) -> int:
     return int(payload.get("stamp_sec", 0) or 0) * 1_000_000_000 + int(payload.get("stamp_nanosec", 0) or 0)
 
 
+def _is_pen_detection(item: dict[str, Any]) -> bool:
+    """Accept the class names used by both our contracts and trained YOLO model."""
+    label = str(item.get("class_name") or item.get("label") or "").strip().lower()
+    return label in {"pen", "pencil"}
+
+
 def _one_pen(payload: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
     if payload.get("ambiguous") or payload.get("rejection_reason") == "ambiguous_multi_target":
         return None, "ambiguous_multi_target"
-    detections = [item for item in payload.get("detections", []) if isinstance(item, dict) and (item.get("class_name") == "pen" or item.get("label") == "pen")]
+    detections = [item for item in payload.get("detections", []) if isinstance(item, dict) and _is_pen_detection(item)]
     if len(detections) == 0:
         return None, "waiting_for_one_pen"
     if len(detections) != 1:
@@ -79,7 +85,7 @@ def _normalise_pen_detections(payload: dict[str, Any]) -> list[dict[str, Any]]:
     raw = [
         (source_index, dict(item))
         for source_index, item in enumerate(payload_detections)
-        if isinstance(item, dict) and (item.get("class_name") == "pen" or item.get("label") == "pen")
+        if isinstance(item, dict) and _is_pen_detection(item)
     ]
     supplied_indexes: set[int] = set()
     indexed: list[tuple[int, dict[str, Any], int | None]] = []
@@ -156,13 +162,64 @@ def _component(gray: np.ndarray, bbox: list[float], params: ExtractorParams) -> 
     return full, "ok"
 
 
-def _extract_detection(image: RectifiedImage, detection: dict[str, Any], params: ExtractorParams) -> tuple[dict[str, Any] | None, str]:
-    bbox = detection.get("bbox_xyxy")
-    if not isinstance(bbox, list) or len(bbox) != 4: return None, "invalid_bbox"
-    mask, reason = _component(image.gray, bbox, params)
-    if mask is None: return None, reason
+def _elongated_components(gray: np.ndarray, bbox: list[float], params: ExtractorParams) -> list[np.ndarray]:
+    """Return independently visible pen-like components in one detector box.
+
+    This intentionally uses only local contrast plus edges, rather than a
+    colour label.  The rectified camera is monochrome in normal operation and
+    pens may have arbitrary colours.  Components are ordered by image centre
+    for stable IDs; callers must still apply the conservative split gate.
+    """
+    h, w = gray.shape[:2]
+    try:
+        x0, y0, x1, y1 = [int(round(float(v))) for v in bbox]
+    except (TypeError, ValueError):
+        return []
+    x0, y0, x1, y1 = max(0, x0), max(0, y0), min(w, x1), min(h, y1)
+    if x1 - x0 < 4 or y1 - y0 < 4:
+        return []
+    roi = gray[y0:y1, x0:x1]
+    high = cv2.absdiff(roi, cv2.GaussianBlur(roi, (0, 0), 5.0))
+    _, contrast = cv2.threshold(high, params.min_contrast, 255, cv2.THRESH_BINARY)
+    edges = cv2.Canny(roi, max(5, params.min_contrast), max(20, params.min_contrast * 3))
+    mask = cv2.bitwise_or(contrast, cv2.dilate(edges, np.ones((3, 3), np.uint8)))
+    # Join the separated barrel/clip edges of one pen, but keep the kernel
+    # bounded so clearly separated parallel pens remain different components.
+    k = max(5, int(params.morphology_kernel_px) * 2 + 1)
+    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, np.ones((k, k), np.uint8))
+    count, labels, stats, centers = cv2.connectedComponentsWithStats(mask)
+    found: list[tuple[tuple[float, float], int, np.ndarray]] = []
+    for index in range(1, count):
+        area = int(stats[index, cv2.CC_STAT_AREA])
+        if area < params.min_mask_pixels:
+            continue
+        points = np.column_stack(np.where(labels == index))[:, ::-1].astype(np.float32)
+        rect = cv2.minAreaRect(points)
+        side_a, side_b = rect[1]
+        aspect = max(side_a, side_b) / max(1.0, min(side_a, side_b))
+        # This is a prefilter only.  The full PCA/edge quality gate below is
+        # still mandatory before an instance is published.
+        if aspect < max(1.35, params.min_aspect_ratio * 0.65):
+            continue
+        full = np.zeros_like(gray)
+        full[y0:y1, x0:x1][labels == index] = 255
+        centre = centers[index] + np.array([x0, y0])
+        found.append(((float(centre[1]), float(centre[0])), area, full))
+    # Isolated pen-tip reflections are frequent in the real scene.  They are
+    # not an independently graspable instance and must not make a good pair
+    # fail merely because the cap is brighter than the barrel.
+    largest = max((area for _, area, _ in found), default=0)
+    found = [item for item in found if item[1] >= max(params.min_mask_pixels, int(largest * 0.10))]
+    return [mask for _, _, mask in sorted(found, key=lambda item: item[0])]
+
+
+def _feature_from_mask(
+    image: RectifiedImage, detection: dict[str, Any], bbox: list[float], mask: np.ndarray, params: ExtractorParams,
+) -> tuple[dict[str, Any] | None, str]:
+    """Apply the existing PCA quality contract to an already selected mask."""
     ys, xs = np.where(mask > 0)
-    if len(xs) < params.min_mask_pixels: return None, "mask_too_small"
+    if len(xs) < params.min_mask_pixels:
+        return None, "mask_too_small"
     points = np.column_stack((xs, ys)).astype(np.float64); center = points.mean(axis=0)
     values, vectors = np.linalg.eigh(np.cov((points - center).T)); order = np.argsort(values)[::-1]
     major, minor, axis = float(values[order[0]]), float(values[order[1]]), vectors[:, order[0]]
@@ -175,6 +232,46 @@ def _extract_detection(image: RectifiedImage, detection: dict[str, Any], params:
     target_id = str(detection.get("target_id") or "target_00")
     feature = {"label": "pen", "class_name": "pen", "id": target_id, "target_id": target_id, "det_index": int(detection.get("det_index", 0) or 0), "confidence": float(detection.get("confidence", 0.0) or 0.0), "bbox_xyxy": [float(v) for v in bbox], "mask_pixels_px": [[int(x), int(y)] for x, y in points], "axis_endpoints_px": [[round(float(v), 3) for v in point] for point in endpoints], "axis_complete": bool(complete), "quality": {"mask_pixel_count": int(len(xs)), "axis_length_px": round(axis_length, 3), "aspect_ratio": float(round(aspect, 3)), "pca_ratio": float(round(ratio, 3)), "near_image_edge": near_edge}}
     return feature, "ok" if complete else "axis_incomplete"
+
+
+def _extract_detection(image: RectifiedImage, detection: dict[str, Any], params: ExtractorParams) -> tuple[dict[str, Any] | None, str]:
+    bbox = detection.get("bbox_xyxy")
+    if not isinstance(bbox, list) or len(bbox) != 4: return None, "invalid_bbox"
+    mask, reason = _component(image.gray, bbox, params)
+    if mask is None: return None, reason
+    return _feature_from_mask(image, detection, bbox, mask, params)
+
+
+def _split_merged_detection(
+    image: RectifiedImage, detection: dict[str, Any], params: ExtractorParams,
+) -> tuple[list[dict[str, Any]] | None, str]:
+    """Split one merged YOLO box only when every proposed pen is trustworthy.
+
+    ``None, not_merged`` lets the normal single-box extraction proceed.  Any
+    evidence of multiple but incomplete objects returns an explicit rejection
+    so a partial split can never lead to a grasp on an unknown pen.
+    """
+    bbox = detection.get("bbox_xyxy")
+    if not isinstance(bbox, list) or len(bbox) != 4:
+        return None, "not_merged"
+    masks = _elongated_components(image.gray, bbox, params)
+    if len(masks) < 2:
+        return None, "not_merged"
+    if len(masks) > 4:
+        return None, "merged_box_split_inconclusive"
+    base_id = str(detection.get("target_id") or "target_00")
+    features: list[dict[str, Any]] = []
+    for split_index, mask in enumerate(masks):
+        child = dict(detection)
+        child["target_id"] = f"{base_id}__split_{split_index:02d}"
+        child["det_index"] = int(detection.get("det_index", 0) or 0) * 10 + split_index
+        feature, reason = _feature_from_mask(image, child, bbox, mask, params)
+        if feature is None or reason != "ok" or not feature["axis_complete"]:
+            return None, "merged_box_split_inconclusive"
+        feature["source_target_id"] = base_id
+        feature["split_from_merged_box"] = True
+        features.append(feature)
+    return features, "ok"
 
 
 def extract_one_pen(image: RectifiedImage, payload: dict[str, Any], params: ExtractorParams = ExtractorParams()) -> tuple[dict[str, Any] | None, str]:
@@ -207,7 +304,14 @@ def extract_pen_features(
     rejections: list[dict[str, Any]] = []
     for detection in detections:
         try:
-            feature, reason = _extract_detection(image, detection, params)
+            split_features, split_reason = _split_merged_detection(image, detection, params)
+            if split_features is not None:
+                features.extend(split_features)
+                continue
+            if split_reason == "merged_box_split_inconclusive":
+                feature, reason = None, split_reason
+            else:
+                feature, reason = _extract_detection(image, detection, params)
         except (TypeError, ValueError, cv2.error) as exc:
             feature, reason = None, f"invalid_bbox:{exc}"
         if feature is not None:

@@ -118,6 +118,7 @@ def build_camera_optical_pen_candidates(
     valid = bool(candidates) and all(item["valid"] for item in candidates)
     return {
         "schema": CAMERA_CANDIDATE_SCHEMA, **_stamp_parts(stamp), "source": source,
+        "transaction_id": f"pick-{stamp}",
         "camera_optical_frame": depth_frame_id, "valid": valid,
         "reason": "ok" if valid else "candidate_invalid", "candidate_count": len(candidates),
         "candidates": candidates, "trusted_for_grasp": False, "physical_execution_eligible": False,

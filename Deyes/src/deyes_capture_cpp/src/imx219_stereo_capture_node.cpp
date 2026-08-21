@@ -4,7 +4,9 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdint>
+#include <cstdlib>
 #include <cstring>
 #include <functional>
 #include <limits>
@@ -18,6 +20,8 @@
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
 #include <diagnostic_msgs/msg/key_value.hpp>
 #include <yaml-cpp/yaml.h>
+
+#include "deyes_capture_cpp/capture_watchdog.hpp"
 
 namespace
 {
@@ -207,6 +211,13 @@ std::deque<FrameSnapshot> CaptureWorker::recent_frames() const
 double CaptureWorker::capture_rate_hz() const
 {
   std::lock_guard<std::mutex> lock(mutex_);
+  // Do not report an old rolling window as a live stream after nvargus/appsink
+  // stops producing samples.
+  if (!last_receipt_steady_.has_value() ||
+    (std::chrono::steady_clock::now() - *last_receipt_steady_) > std::chrono::seconds(1))
+  {
+    return 0.0;
+  }
   if (receipt_history_.size() < 2) {
     return 0.0;
   }
@@ -217,9 +228,23 @@ double CaptureWorker::capture_rate_hz() const
   return static_cast<double>(receipt_history_.size() - 1U) / elapsed;
 }
 
+double CaptureWorker::last_receipt_age_sec() const
+{
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (!last_receipt_steady_.has_value()) {
+    return std::numeric_limits<double>::infinity();
+  }
+  return std::chrono::duration<double>(std::chrono::steady_clock::now() - *last_receipt_steady_).count();
+}
+
 uint64_t CaptureWorker::total_failures() const
 {
   return total_failures_.load();
+}
+
+uint64_t CaptureWorker::pull_timeout_count() const
+{
+  return pull_timeout_count_.load();
 }
 
 void CaptureWorker::capture_loop()
@@ -227,6 +252,7 @@ void CaptureWorker::capture_loop()
   while (!stop_requested_.load()) {
     GstSample * sample = gst_app_sink_try_pull_sample(GST_APP_SINK(appsink_), 50 * GST_MSECOND);
     if (sample == nullptr) {
+      pull_timeout_count_.fetch_add(1);
       continue;
     }
 
@@ -282,6 +308,7 @@ void CaptureWorker::capture_loop()
         recent_frames_.pop_front();
       }
       receipt_history_.push_back(latest_->stamp_sec);
+      last_receipt_steady_ = std::chrono::steady_clock::now();
       if (receipt_history_.size() > 120) {
         receipt_history_.pop_front();
       }
@@ -345,6 +372,8 @@ Imx219StereoCaptureNode::Imx219StereoCaptureNode(const rclcpp::NodeOptions & opt
   declare_parameter<double>("target_publish_hz", 30.0);
   declare_parameter<double>("pair_max_skew_ms", 20.0);
   declare_parameter<double>("frame_stale_sec", 0.2);
+  declare_parameter<double>("capture_stall_sec", 2.0);
+  declare_parameter<double>("capture_startup_grace_sec", 8.0);
   declare_parameter<double>("log_stats_period_sec", 2.0);
   declare_parameter<int>("history_size", 8);
   declare_parameter<bool>("reuse_latest_frame", false);
@@ -369,9 +398,16 @@ Imx219StereoCaptureNode::Imx219StereoCaptureNode(const rclcpp::NodeOptions & opt
   reuse_latest_frame_ = get_parameter("reuse_latest_frame").as_bool();
   pair_max_skew_sec_ = get_parameter("pair_max_skew_ms").as_double() / 1000.0;
   frame_stale_sec_ = get_parameter("frame_stale_sec").as_double();
+  capture_stall_sec_ = get_parameter("capture_stall_sec").as_double();
+  capture_startup_grace_sec_ = get_parameter("capture_startup_grace_sec").as_double();
   log_stats_period_sec_ = get_parameter("log_stats_period_sec").as_double();
   const double target_publish_hz = get_parameter("target_publish_hz").as_double();
   publish_period_sec_ = target_publish_hz > 0.0 ? (1.0 / target_publish_hz) : (1.0 / 30.0);
+  if (capture_stall_sec_ <= 0.0 || capture_startup_grace_sec_ < 0.0)
+  {
+    throw std::invalid_argument(
+            "capture_stall_sec must be positive and capture_startup_grace_sec non-negative");
+  }
 
   left_image_pub_ = create_publisher<sensor_msgs::msg::Image>(
     get_parameter("left_image_topic").as_string(), rclcpp::SensorDataQoS());
@@ -520,9 +556,15 @@ void Imx219StereoCaptureNode::publish_pair_diagnostics()
   diagnostic_msgs::msg::DiagnosticStatus status;
   status.name = get_name() + std::string(": stereo_pairing");
   status.hardware_id = "imx219_stereo_pair";
-  status.level = (dropped_skew_count_ == 0U && dropped_stale_count_ == 0U) ?
+  const double left_receipt_age_sec = left_worker_->last_receipt_age_sec();
+  const double right_receipt_age_sec = right_worker_->last_receipt_age_sec();
+  const bool capture_stalled =
+    capture_stream_stalled(std::isfinite(left_receipt_age_sec), left_receipt_age_sec, capture_stall_sec_) ||
+    capture_stream_stalled(std::isfinite(right_receipt_age_sec), right_receipt_age_sec, capture_stall_sec_);
+  status.level = (!capture_stalled && dropped_skew_count_ == 0U && dropped_stale_count_ == 0U) ?
     diagnostic_msgs::msg::DiagnosticStatus::OK : diagnostic_msgs::msg::DiagnosticStatus::WARN;
-  status.message = status.level == diagnostic_msgs::msg::DiagnosticStatus::OK ? "ok" : "pairing_drops_observed";
+  status.message = status.level == diagnostic_msgs::msg::DiagnosticStatus::OK ? "ok" :
+    (capture_stalled ? "capture_stall_recovery" : "pairing_drops_observed");
 
   const auto p95 = skew_history_ms_.empty() ? std::numeric_limits<double>::quiet_NaN() :
     percentile(std::vector<double>(skew_history_ms_.begin(), skew_history_ms_.end()), 0.95);
@@ -542,6 +584,10 @@ void Imx219StereoCaptureNode::publish_pair_diagnostics()
   add("wait_pair", std::to_string(waiting_for_pair_count_));
   add("left_failures", std::to_string(left_worker_->total_failures()));
   add("right_failures", std::to_string(right_worker_->total_failures()));
+  add("left_last_receipt_age_ms", format_metric(left_receipt_age_sec * 1000.0, 1));
+  add("right_last_receipt_age_ms", format_metric(right_receipt_age_sec * 1000.0, 1));
+  add("left_pull_timeouts", std::to_string(left_worker_->pull_timeout_count()));
+  add("right_pull_timeouts", std::to_string(right_worker_->pull_timeout_count()));
   array.status.push_back(std::move(status));
   pair_diagnostics_pub_->publish(array);
 }
@@ -577,6 +623,7 @@ std::string Imx219StereoCaptureNode::skew_summary() const
 void Imx219StereoCaptureNode::on_timer()
 {
   const double current_sec = now_sec();
+  fail_fast_if_capture_stalled();
   const auto left_frames = left_worker_->recent_frames();
   const auto right_frames = right_worker_->recent_frames();
   if (left_frames.empty() || right_frames.empty()) {
@@ -675,6 +722,38 @@ void Imx219StereoCaptureNode::on_timer()
   maybe_log_stats(current_sec);
 }
 
+void Imx219StereoCaptureNode::fail_fast_if_capture_stalled()
+{
+  const auto monotonic_now = std::chrono::steady_clock::now();
+  const double seconds_since_start = std::chrono::duration<double>(
+    monotonic_now - capture_started_steady_).count();
+  const double left_receipt_age_sec = left_worker_->last_receipt_age_sec();
+  const double right_receipt_age_sec = right_worker_->last_receipt_age_sec();
+  if (!capture_fail_fast_due(
+      std::isfinite(left_receipt_age_sec), left_receipt_age_sec,
+      std::isfinite(right_receipt_age_sec), right_receipt_age_sec,
+      capture_stall_sec_, seconds_since_start, capture_startup_grace_sec_))
+  {
+    return;
+  }
+
+  // nvargus is unsafe to tear down/recreate within this process after its appsink
+  // has stalled (it has produced InvalidState followed by SIGSEGV).  Emit a final
+  // observable diagnostic then exit without C++ destructors; launch respawn owns
+  // rebuilding the *whole* camera pair after a cooldown.
+  publish_pair_diagnostics();
+  // Give the middleware writer a short chance to flush that final diagnostic;
+  // this does not invoke any GStreamer/Argus teardown path.
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  RCLCPP_FATAL(
+    get_logger(),
+    "capture stalled (left_age_ms=%.1f right_age_ms=%.1f uptime_sec=%.1f); "
+    "exiting process for launch-managed full-pair recovery",
+    left_receipt_age_sec * 1000.0, right_receipt_age_sec * 1000.0, seconds_since_start);
+  std::fflush(nullptr);
+  std::_Exit(75);
+}
+
 void Imx219StereoCaptureNode::maybe_log_stats(double now_sec_value)
 {
   if ((now_sec_value - last_stats_log_sec_) < log_stats_period_sec_) {
@@ -694,7 +773,8 @@ void Imx219StereoCaptureNode::maybe_log_stats(double now_sec_value)
     "stats publish_hz=%.2f left_capture_hz=%.2f right_capture_hz=%.2f published=%llu(+%llu) "
     "drop_skew=%llu(+%llu) drop_stale=%llu(+%llu) wait_pair=%llu(+%llu) "
     "last_skew_ms=%.2f skew_window={%s} publish_ms=%.2f "
-    "last_pair_seq=%llu/%llu left_failures=%llu right_failures=%llu",
+    "last_pair_seq=%llu/%llu left_age_ms=%.1f right_age_ms=%.1f left_timeouts=%llu right_timeouts=%llu "
+    "left_failures=%llu right_failures=%llu",
     publish_rate_hz(),
     left_worker_->capture_rate_hz(),
     right_worker_->capture_rate_hz(),
@@ -711,6 +791,10 @@ void Imx219StereoCaptureNode::maybe_log_stats(double now_sec_value)
     last_publish_duration_ms_,
     static_cast<unsigned long long>(last_pair_left_seq_),
     static_cast<unsigned long long>(last_pair_right_seq_),
+    left_worker_->last_receipt_age_sec() * 1000.0,
+    right_worker_->last_receipt_age_sec() * 1000.0,
+    static_cast<unsigned long long>(left_worker_->pull_timeout_count()),
+    static_cast<unsigned long long>(right_worker_->pull_timeout_count()),
     static_cast<unsigned long long>(left_worker_->total_failures()),
     static_cast<unsigned long long>(right_worker_->total_failures()));
 }

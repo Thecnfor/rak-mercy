@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Mercury X1 双目标定
+Comment=采集、求解并严格验证双目物理标定
+Exec=@DEYES_GUI_LAUNCHER@
+Terminal=false
+Categories=Development;Robotics;

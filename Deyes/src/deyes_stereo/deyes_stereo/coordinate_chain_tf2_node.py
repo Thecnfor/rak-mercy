@@ -60,7 +60,7 @@ class CoordinateChainTF2Node(Node):
             result = transform_request(request, np.asarray([[1 - 2*(q.y*q.y + q.z*q.z), 2*(q.x*q.y - q.z*q.w), 2*(q.x*q.z + q.y*q.w)], [2*(q.x*q.y + q.z*q.w), 1 - 2*(q.x*q.x + q.z*q.z), 2*(q.y*q.z - q.x*q.w)], [2*(q.x*q.z - q.y*q.w), 2*(q.y*q.z + q.x*q.w), 1 - 2*(q.x*q.x + q.y*q.y)]]), np.asarray([t.x, t.y, t.z]), tf_quaternion_xyzw=[q.x, q.y, q.z, q.w])
             # Preserve the bridge identity: an execution admission must prove
             # that its dry-run plan is for this exact transformed observation.
-            result.update({"candidate_id": str(raw.get("candidate_id") or ""), "trusted_for_execution": True, "calibration_id": self._trust.get("calibration_id", "")})
+            result.update({"candidate_id": str(raw.get("candidate_id") or ""), "transaction_id": str(raw.get("transaction_id") or f"pick-{request['stamp_ns']}"), "trusted_for_execution": True, "calibration_id": self._trust.get("calibration_id", "")})
             self._publish(self._result, result); self._publish(self._status, {"level": "ok", "trusted_for_execution": True, "target_frame": request["target_frame"]})
         except (ValueError, TransformException, json.JSONDecodeError) as exc:
             self._publish(self._status, {"level": "invalid", "trusted_for_execution": False, "reason": str(exc)})

@@ -42,8 +42,8 @@ def validate_request(payload: Any) -> dict[str, Any]:
     if not isinstance(payload, dict):
         raise ValueError("coordinate_request_must_be_object")
     kind = str(payload.get("kind") or "")
-    if kind not in ("point", "pose"):
-        raise ValueError("kind_must_be_point_or_pose")
+    if kind not in ("point", "pose", "grasp_geometry"):
+        raise ValueError("kind_must_be_point_pose_or_grasp_geometry")
     source_frame = str(payload.get("source_frame") or "")
     target_frame = str(payload.get("target_frame") or "")
     if source_frame != CAMERA_FRAME:
@@ -59,7 +59,24 @@ def validate_request(payload: Any) -> dict[str, Any]:
         raise ValueError("stamp_ns_invalid")
     if kind == "pose":
         result["quaternion_xyzw"] = normalize_quaternion(payload.get("quaternion_xyzw"))
+    if kind == "grasp_geometry":
+        result["axis_unit"] = _unit_vector(payload.get("axis_unit"), "axis_unit")
+        result["approach_normal_unit"] = _unit_vector(payload.get("approach_normal_unit"), "approach_normal_unit")
+        result["candidate_id"] = str(payload.get("candidate_id") or "")
+        result["transaction_id"] = str(payload.get("transaction_id") or f"pick-{result['stamp_ns']}")
+        if not result["candidate_id"]:
+            raise ValueError("candidate_id_missing")
+        quality = payload.get("quality")
+        result["quality"] = dict(quality) if isinstance(quality, dict) else {}
     return result
+
+
+def _unit_vector(value: Any, name: str) -> list[float]:
+    vector = np.asarray(_finite_vector(value, name, 3), dtype=float)
+    magnitude = float(np.linalg.norm(vector))
+    if magnitude < 1e-9:
+        raise ValueError(f"{name}_zero_norm")
+    return (vector / magnitude).tolist()
 
 
 def trusted_for_execution(status: Any) -> tuple[bool, str]:
@@ -97,4 +114,11 @@ def transform_request(request: dict[str, Any], rotation: np.ndarray, translation
     output["frame_id"] = checked["target_frame"]
     if checked["kind"] == "pose":
         output["quaternion_xyzw"] = quaternion_multiply(normalize_quaternion(tf_quaternion_xyzw), checked["quaternion_xyzw"])
+    if checked["kind"] == "grasp_geometry":
+        output.update({
+            "grasp_point_base_m": output["position_m"],
+            "axis_base_unit": _unit_vector((rotation @ np.asarray(checked["axis_unit"])).tolist(), "axis_base_unit"),
+            "approach_normal_base_unit": _unit_vector((rotation @ np.asarray(checked["approach_normal_unit"])).tolist(), "approach_normal_base_unit"),
+            "quality": checked["quality"],
+        })
     return output

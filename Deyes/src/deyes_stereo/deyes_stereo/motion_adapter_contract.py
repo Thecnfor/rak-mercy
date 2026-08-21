@@ -15,6 +15,7 @@ NAV2_ACTION_TYPE = "nav2_msgs/action/NavigateToPose"
 DUAL_ARM_CAPABILITIES = (
     "goal_acceptance", "feedback", "cancellation", "timeout", "result",
     "collision_check", "left_arm_feedback", "right_arm_feedback", "gripper_feedback",
+    "selected_arm", "joint_limits", "cartesian_limits", "speed_limits", "dry_run_default",
 )
 
 

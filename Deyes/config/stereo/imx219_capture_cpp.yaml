@@ -18,6 +18,10 @@ imx219_stereo_capture_node:
     target_publish_hz: 30.0
     pair_max_skew_ms: 20.0
     frame_stale_sec: 0.2
+    # A no-sample nvargus/appsink stall is distinct from a skew rejection.  The
+    # C++ process exits after this timeout; launch respawns the whole camera pair.
+    capture_stall_sec: 2.0
+    capture_startup_grace_sec: 8.0
     history_size: 8
     log_stats_period_sec: 2.0
     reuse_latest_frame: false
