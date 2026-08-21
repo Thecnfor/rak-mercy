@@ -1,0 +1,23 @@
+isaac_right_arm_stage_executor:
+  ros__parameters:
+    plan_topic: "/sim/grasp/single_pen_plan"
+    ros_domain_id: 46
+    joint_command_topic: "/x1_sim/joint_command"
+    gripper_command_topic: "/x1_sim/gripper_command"
+    joint_state_topic: "/x1_sim/joint_states"
+    gripper_state_topic: "/x1_sim/gripper_joint_states"
+    pen_pose_topic: "/x1_sim/pen_pose"
+    status_topic: "/x1_sim/grasp/motion_status"
+    trace_topic: "/x1_sim/grasp/motion_trace"
+    # Must be copied from live /x1_sim/joint_states; never guess names.
+    right_joint_names: ["joint1_R", "joint2_R", "joint3_R", "joint4_R", "joint5_R", "joint6_R"]
+    # Verified from the Isaac Mercury X1 USD and /x1_sim/joint_states.
+    # These are the only four actively-driven right-gripper roots; signs and
+    # aperture mapping are enforced in isaac_right_arm_ik_contract.py.
+    right_gripper_feedback_names: ["right_gripper_left_finger_joint", "right_gripper_right_finger_joint", "right_gripper_left_joint2", "right_gripper_right_join2"]
+    right_gripper_command_names: ["right_gripper_left_finger_joint", "right_gripper_right_finger_joint", "right_gripper_left_joint2", "right_gripper_right_join2"]
+    enable_execution: false
+    simulation_only: false
+    motion_enabled: false
+    feedback_timeout_sec: 0.5
+    pen_lift_threshold_m: 0.03

@@ -42,5 +42,8 @@ yolo_detector_node:
     # 0 leaves count unconstrained for generic detector profiles.
     expected_max_targets: 0
     duplicate_iou: 0.80
+    # Use one_shot with the frozen snapshot topic on the edge deployment.
+    run_mode: "continuous"
+    release_backend_after_inference: false
     # JSON array. [] means pass all classes; malformed input fails closed.
     allowed_class_ids_json: "[]"

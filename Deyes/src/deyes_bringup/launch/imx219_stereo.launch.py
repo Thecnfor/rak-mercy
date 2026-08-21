@@ -34,6 +34,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("target_publish_hz", default_value="30.0"),
         DeclareLaunchArgument("pair_max_skew_ms", default_value="20.0"),
         DeclareLaunchArgument("frame_stale_sec", default_value="0.2"),
+        DeclareLaunchArgument("capture_stall_sec", default_value="2.0"),
+        DeclareLaunchArgument("capture_startup_grace_sec", default_value="8.0"),
         DeclareLaunchArgument("history_size", default_value="8"),
         DeclareLaunchArgument("publish_period_sec", default_value="0.033333333"),
         DeclareLaunchArgument("output_encoding", default_value="mono8"),
@@ -133,6 +135,8 @@ def generate_launch_description() -> LaunchDescription:
         name="imx219_stereo_capture_node",
         condition=IfCondition(LaunchConfiguration("use_cpp_capture")),
         output="screen",
+        respawn=True,
+        respawn_delay=5.0,
         parameters=[
             cpp_capture_params,
             {
@@ -142,6 +146,8 @@ def generate_launch_description() -> LaunchDescription:
                 "target_publish_hz": LaunchConfiguration("target_publish_hz"),
                 "pair_max_skew_ms": LaunchConfiguration("pair_max_skew_ms"),
                 "frame_stale_sec": LaunchConfiguration("frame_stale_sec"),
+                "capture_stall_sec": LaunchConfiguration("capture_stall_sec"),
+                "capture_startup_grace_sec": LaunchConfiguration("capture_startup_grace_sec"),
                 "history_size": LaunchConfiguration("history_size"),
                 "output_encoding": LaunchConfiguration("output_encoding"),
                 "rotate_180": LaunchConfiguration("rotate_180"),

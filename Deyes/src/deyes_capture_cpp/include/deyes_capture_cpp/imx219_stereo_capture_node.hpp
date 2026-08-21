@@ -1,8 +1,10 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -52,7 +54,9 @@ public:
   std::optional<FrameSnapshot> latest() const;
   std::deque<FrameSnapshot> recent_frames() const;
   double capture_rate_hz() const;
+  double last_receipt_age_sec() const;
   uint64_t total_failures() const;
+  uint64_t pull_timeout_count() const;
 
 private:
   void capture_loop();
@@ -76,8 +80,10 @@ private:
   std::optional<FrameSnapshot> latest_;
   std::deque<FrameSnapshot> recent_frames_;
   std::deque<double> receipt_history_;
+  std::optional<std::chrono::steady_clock::time_point> last_receipt_steady_;
   std::size_t history_size_{8};
   std::atomic<uint64_t> total_failures_{0};
+  std::atomic<uint64_t> pull_timeout_count_{0};
   std::atomic<bool> stop_requested_{false};
   std::thread thread_;
   uint64_t frame_count_{0};
@@ -106,6 +112,7 @@ private:
     const std::string & frame_id) const;
 
   void on_timer();
+  void fail_fast_if_capture_stalled();
   void maybe_log_stats(double now_sec);
   void publish_pair_diagnostics();
   double publish_rate_hz() const;
@@ -132,6 +139,8 @@ private:
   bool swap_left_right_{false};
   double pair_max_skew_sec_{0.02};
   double frame_stale_sec_{0.2};
+  double capture_stall_sec_{2.0};
+  double capture_startup_grace_sec_{8.0};
   double publish_period_sec_{1.0 / 30.0};
   double log_stats_period_sec_{2.0};
   double last_stats_log_sec_{0.0};
@@ -143,6 +152,7 @@ private:
   uint64_t dropped_skew_count_{0};
   uint64_t dropped_stale_count_{0};
   uint64_t waiting_for_pair_count_{0};
+  std::chrono::steady_clock::time_point capture_started_steady_{std::chrono::steady_clock::now()};
   std::deque<double> publish_history_;
   std::deque<double> skew_history_ms_;
   uint64_t last_logged_publish_count_{0};

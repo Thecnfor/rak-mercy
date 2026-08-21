@@ -1,0 +1,15 @@
+isaac_single_pen_candidate_node:
+  ros__parameters:
+    pen_features_topic: "/x1_sim/detection/pen_features"
+    depth_topic: "/x1_sim/left_camera/depth"
+    camera_info_topic: "/x1_sim/left_camera/camera_info"
+    plane_topic: "/x1_sim/ground/plane"
+    output_topic: "/x1_sim/grasp/single_pen_candidate"
+    status_topic: "/x1_sim/grasp/single_pen_candidate_status"
+    camera_frame: "left_camera_optical_frame"
+    expected_scene_sha256: ""
+    max_age_sec: 0.5
+    min_depth_m: 0.20
+    max_depth_m: 2.50
+    min_plane_clearance_m: 0.004
+    edge_margin_px: 12

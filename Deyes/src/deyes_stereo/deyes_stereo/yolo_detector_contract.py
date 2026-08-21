@@ -13,6 +13,17 @@ import numpy as np
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
+def validate_roi(x: int, y: int, width: int, height: int, frame_width: int, frame_height: int) -> tuple[int,int,int,int]:
+    values=(x,y,width,height)
+    if any(v < 0 for v in values) or frame_width <= 0 or frame_height <= 0:
+        raise ValueError("roi_values_must_be_non_negative")
+    if width == 0 and height == 0:
+        if x or y: raise ValueError("disabled_roi_requires_zero_origin")
+        return (0,0,frame_width,frame_height)
+    if width <= 1 or height <= 1 or x + width > frame_width or y + height > frame_height:
+        raise ValueError("roi_out_of_frame_bounds")
+    return (x,y,width,height)
+
 
 @dataclass(frozen=True)
 class TensorRTBinding:

@@ -14,6 +14,7 @@ from typing import Any
 import numpy as np
 
 from .motion_adapter_contract import required_motion_adapter_contract
+from .mercury_arm_safety_contract import MercuryArmSafetyProfile, validate_low_speed_motion_request
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,11 @@ def build_dry_run_plan(
         if not _inside_workspace(point, lower, upper):
             return {"state": "rejected", "reason": f"{name}_outside_workspace", "commands_emitted": False}
     pose_payload = {name: {"frame_id": "base_link", "position_m": [round(float(v), 5) for v in point], "tool_basis_columns_base": [[round(float(v), 6) for v in row] for row in basis]} for name, point in poses.items()}
+    # Attach a dry-run safety preview to every Cartesian intent.  It uses an
+    # intentionally incomplete profile, so it documents why the plan cannot
+    # be passed to a physical controller before a measured per-arm envelope is
+    # installed.  This remains useful even if a caller sets execution flags.
+    safety_profile = MercuryArmSafetyProfile()
     execution_blocks = ["motion_adapter_not_implemented"]
     if not site_profile_validated:
         execution_blocks.append("site_profile_not_validated")
@@ -184,11 +190,21 @@ def build_dry_run_plan(
         {"name": "lift", "kind": "cartesian_intent", "pose": pose_payload["lift"]},
         {"name": "safe_retreat", "kind": "cartesian_intent", "pose": pose_payload["safe_retreat"]},
     ])
+    for step in steps:
+        if step["kind"] == "cartesian_intent":
+            pose = step["pose"]
+            step["low_speed_adapter_preview"] = validate_low_speed_motion_request(
+                {"kind": "cartesian_pose", "frame_id": pose["frame_id"], "position_m": pose["position_m"]}, safety_profile,
+            )
+        elif step["kind"] == "gripper_intent":
+            step["low_speed_adapter_preview"] = validate_low_speed_motion_request({"kind": "gripper", "action": "close"}, safety_profile)
     return {
         "state": "dry_run_ready",
         "reason": "ok",
         "commands_emitted": False,
         "target_id": str(candidate.get("target_id") or candidate.get("pen_id") or "pen"),
+        "transaction_id": str(payload.get("transaction_id") or f"pick-{stamp_ns}"),
+        "calibration_id": str(candidate.get("calibration_id") or payload.get("calibration_id") or ""),
         "candidate_stamp_ns": stamp_ns,
         "tool_orientation_contract": "columns=[gripper_long_axis, lateral_axis, outbound_approach_axis]",
         "navigation_gate_included": include_navigation_gate,
@@ -197,3 +213,38 @@ def build_dry_run_plan(
         "execution_block_reasons": execution_blocks,
         "required_motion_adapter_contract": required_motion_adapter_contract(),
     }
+
+
+def build_plan_from_coordinate_result(
+    coordinate: dict[str, Any], *, now_stamp_ns: int, limits: PickPlanLimits,
+    site_profile_validated: bool,
+) -> dict[str, Any]:
+    """Adapt one trusted aggregate TF result into the existing planner contract."""
+    if not isinstance(coordinate, dict) or coordinate.get("kind") != "grasp_geometry":
+        return {"state":"rejected","reason":"coordinate_result_must_be_grasp_geometry","commands_emitted":False}
+    stamp = int(coordinate.get("stamp_ns", 0) or 0)
+    candidate_id = str(coordinate.get("candidate_id") or "")
+    calibration_id = str(coordinate.get("calibration_id") or "")
+    transaction_id = str(coordinate.get("transaction_id") or "")
+    if coordinate.get("trusted_for_execution") is not True or coordinate.get("frame_id") != "base_link":
+        return {"state":"rejected","reason":"coordinate_result_not_trusted_for_execution","commands_emitted":False}
+    if not candidate_id or transaction_id != f"pick-{stamp}" or not calibration_id:
+        return {"state":"rejected","reason":"coordinate_transaction_identity_invalid","commands_emitted":False}
+    candidate = {
+        "valid": True, "trusted_for_grasp": True, "target_id": candidate_id,
+        "target_frame": "base_link", "grasp_point_base_m": coordinate.get("grasp_point_base_m"),
+        "axis_base_unit": coordinate.get("axis_base_unit"),
+        "approach_normal_base_unit": coordinate.get("approach_normal_base_unit"),
+        "quality": coordinate.get("quality") if isinstance(coordinate.get("quality"), dict) else {},
+        "calibration_id": calibration_id,
+    }
+    envelope = {
+        "valid": True, "trusted_for_grasp": True, "candidate_count": 1,
+        "stamp_sec": stamp // 1_000_000_000, "stamp_nanosec": stamp % 1_000_000_000,
+        "transaction_id": transaction_id, "calibration_id": calibration_id, "candidates": [candidate],
+    }
+    return build_dry_run_plan(
+        envelope, now_stamp_ns=now_stamp_ns, limits=limits,
+        site_profile_validated=site_profile_validated,
+        enable_execution=False, operator_approved=False, include_navigation_gate=False,
+    )

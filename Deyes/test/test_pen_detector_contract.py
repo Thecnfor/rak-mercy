@@ -19,6 +19,7 @@ from deyes_stereo.yolo_detector_contract import (  # noqa: E402
     validate_tensorrt_yolov5_contract,
     validate_tensorrt_yolov8_contract,
     verify_model_sha256,
+    validate_roi,
 )
 
 
@@ -56,9 +57,9 @@ def test_all_backends_share_the_single_final_class_filter() -> None:
     content = NODE_PATH.read_text(encoding="utf-8")
     timer_body = content[content.index("    def _on_timer(") : content.index("\n\ndef main()")]
 
-    assert "detections, inference_ms = self._infer(frame)" in timer_body
+    assert "detections, inference_ms = self._infer(infer_frame)" in timer_body
     assert "filter_detections_by_allowed_class_ids(detections, self._allowed_class_ids)" in timer_body
-    assert timer_body.index("detections, inference_ms = self._infer(frame)") < timer_body.index(
+    assert timer_body.index("detections, inference_ms = self._infer(infer_frame)") < timer_body.index(
         "filter_detections_by_allowed_class_ids(detections, self._allowed_class_ids)"
     )
     for backend_method in ("_infer_ultralytics", "_infer_opencv_dnn", "_infer_tensorrt"):
@@ -134,7 +135,16 @@ def test_tensorrt_yolov8_contract_requires_explicit_transposed_single_io_layout(
     assert contract.decoder == "yolov8"
     assert contract.output_shape == (1, 5, 8400)
 
-
+def test_roi_validation_and_disabled_full_frame() -> None:
+    assert validate_roi(0, 0, 0, 0, 1280, 720) == (0, 0, 1280, 720)
+    assert validate_roi(280, 380, 290, 60, 1280, 720) == (280, 380, 290, 60)
+    for args in ((1, 0, 0, 0, 100, 100), (90, 0, 20, 10, 100, 100), (0, 0, 1, 10, 100, 100)):
+        try:
+            validate_roi(*args)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid ROI was accepted")
 def test_yolov8_prediction_normalization_transposes_anchors_without_guessing() -> None:
     import numpy as np
 

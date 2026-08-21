@@ -1,0 +1,79 @@
+single_shot_snapshot_node:
+  ros__parameters:
+    autonomous_once: true
+    dry_run: true
+    enable_live_execution: false
+    required_samples: 5
+    stable_hold_sec: 0.5
+    max_pair_skew_ms: 10.0
+    max_plane_center_delta_m: 0.005
+    max_plane_normal_delta_deg: 2.0
+    max_base_linear_m_s: 0.01
+    max_base_angular_rad_s: 0.02
+    max_joint_delta_deg: 0.3
+    state_timeout_sec: 0.5
+
+yolo_detector_node:
+  ros__parameters:
+    image_topic: "/x1/snapshot/left_rect"
+    output_topic: "/x1/detection/boxes"
+    backend: "tensorrt"
+    model_path: ""
+    model_id: ""
+    expected_model_sha256: ""
+    expected_class_count: 1
+    tensorrt_output_layout: "yolov8"
+    expected_max_targets: 1
+    allowed_class_ids_json: "[0]"
+    run_mode: "one_shot"
+    release_backend_after_inference: true
+    publish_debug_image: false
+
+pen_feature_node:
+  ros__parameters:
+    image_topic: "/x1/snapshot/left_rect"
+    detection_topic: "/x1/detection/boxes"
+
+vision_grasp_candidate_node:
+  ros__parameters:
+    pen_features_topic: "/x1/detection/pen_features"
+    depth_topic: "/x1/snapshot/depth"
+    camera_info_topic: "/x1/snapshot/camera_info_rect"
+    plane_topic: "/x1/snapshot/plane"
+    max_target_age_sec: 2.0
+
+coordinate_chain_candidate_bridge_node:
+  ros__parameters:
+    candidate_topic: "/x1/grasp/candidates_camera"
+    target_frame: "base_link"
+
+single_shot_pick_planner_node:
+  ros__parameters:
+    site_profile_path: ""
+    max_candidate_age_sec: 2.0
+    pregrasp_clearance_m: 0.12
+    approach_distance_m: 0.08
+    lift_distance_m: 0.10
+    retreat_distance_m: 0.12
+
+mercury_right_arm_action_server:
+  ros__parameters:
+    dry_run: true
+    enable_live_execution: false
+    operator_confirmed: false
+    autonomous_once: true
+    site_profile_path: ""
+    stereo_calibration_path: ""
+    extrinsics_path: ""
+
+single_shot_pick_executor_node:
+  ros__parameters:
+    arm_side: "right"
+    autonomous_once: true
+    dry_run: true
+    enable_live_execution: false
+    operator_confirmed: false
+    max_cartesian_speed_m_s: 0.02
+    cartesian_timeout_sec: 8.0
+    gripper_timeout_sec: 3.0
+    gripper_effort_percent: 20.0

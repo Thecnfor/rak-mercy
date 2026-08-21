@@ -31,11 +31,23 @@ def build_coordinate_chain_requests(candidate_payload: Any, *, target_frame: str
         point = candidate.get("coordinate_chain_point")
         if not isinstance(point, dict):
             return {"state": "rejected", "reason": "coordinate_chain_point_missing", "requests": [], "published": False}
+        candidate_id = str(candidate.get("target_id") or candidate.get("id") or "")
+        stamp_ns = int(point.get("stamp_ns", 0) or 0)
+        has_geometry = all(candidate.get(name) is not None for name in (
+            "grasp_point_camera_optical_m", "axis_camera_optical_unit", "approach_normal_camera_optical_unit"))
+        geometry = ({
+            "kind": "grasp_geometry", "source_frame": point.get("source_frame"),
+            "stamp_ns": stamp_ns, "position_m": candidate.get("grasp_point_camera_optical_m"),
+            "axis_unit": candidate.get("axis_camera_optical_unit"),
+            "approach_normal_unit": candidate.get("approach_normal_camera_optical_unit"),
+            "candidate_id": candidate_id, "transaction_id": str(candidate_payload.get("transaction_id") or f"pick-{stamp_ns}"),
+            "quality": candidate.get("quality") if isinstance(candidate.get("quality"), dict) else {},
+        } if has_geometry else dict(point))
         try:
-            request = validate_request({**point, "target_frame": str(target_frame)})
+            request = validate_request({**geometry, "target_frame": str(target_frame)})
         except ValueError as exc:
             return {"state": "rejected", "reason": str(exc), "requests": [], "published": False}
-        request["candidate_id"] = str(candidate.get("target_id") or candidate.get("id") or "")
+        request["candidate_id"] = candidate_id
         if not request["candidate_id"]:
             return {"state": "rejected", "reason": "camera_candidate_id_missing", "requests": [], "published": False}
         requests.append(request)

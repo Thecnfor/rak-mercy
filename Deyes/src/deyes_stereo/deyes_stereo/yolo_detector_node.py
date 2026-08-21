@@ -24,6 +24,7 @@ from .yolo_detector_contract import (
     validate_tensorrt_yolov5_contract,
     validate_tensorrt_yolov8_contract,
     verify_model_sha256,
+    validate_roi,
 )
 
 
@@ -211,6 +212,9 @@ class YoloDetectorNode(Node):
             "tensorrt_output_layout": "yolov5",
             "expected_max_targets": 0,
             "duplicate_iou": 0.80,
+            "run_mode": "continuous",
+            "release_backend_after_inference": False,
+            "roi_x": 0, "roi_y": 0, "roi_width": 0, "roi_height": 0,
         }
         for name, value in defaults.items():
             self.declare_parameter(name, value)
@@ -237,6 +241,12 @@ class YoloDetectorNode(Node):
         ).strip().lower()
         self._expected_max_targets = int(self.get_parameter("expected_max_targets").value)
         self._duplicate_iou = float(self.get_parameter("duplicate_iou").value)
+        self._run_mode = str(self.get_parameter("run_mode").value).strip().lower()
+        if self._run_mode not in {"continuous", "one_shot"}:
+            raise ValueError("run_mode_must_be_continuous_or_one_shot")
+        self._release_after_inference = bool(self.get_parameter("release_backend_after_inference").value)
+        self._roi = tuple(int(self.get_parameter(k).value) for k in ("roi_x","roi_y","roi_width","roi_height"))
+        self._one_shot_complete = False
         self._class_names_override = self._load_class_names_json(
             str(self.get_parameter("class_names_json").value)
         )
@@ -499,6 +509,8 @@ class YoloDetectorNode(Node):
         self._status_pub.publish(msg)
 
     def _on_image(self, msg: Image) -> None:
+        if self._one_shot_complete:
+            return
         try:
             bgr = image_msg_to_bgr(msg)
         except Exception as exc:
@@ -779,6 +791,8 @@ class YoloDetectorNode(Node):
         raise RuntimeError(f"unsupported backend: {self._backend_name}")
 
     def _on_timer(self) -> None:
+        if self._one_shot_complete:
+            return
         frame = self._frame
         if frame is None:
             self._publish_status("warn", "waiting for image frame")
@@ -792,7 +806,15 @@ class YoloDetectorNode(Node):
             return
 
         try:
-            detections, inference_ms = self._infer(frame)
+            rx, ry, rw, rh = validate_roi(*self._roi, frame.width, frame.height)
+            infer_frame = frame if (rx,ry,rw,rh)==(0,0,frame.width,frame.height) else ImageFrame(
+                stamp_ns=frame.stamp_ns, frame_id=frame.frame_id, width=rw, height=rh,
+                bgr=frame.bgr[ry:ry+rh, rx:rx+rw])
+            detections, inference_ms = self._infer(infer_frame)
+            if (rx,ry)!=(0,0):
+                for detection in detections:
+                    b=detection.get("bbox_xyxy", [])
+                    if len(b)==4: detection["bbox_xyxy"]=[b[0]+rx,b[1]+ry,b[2]+rx,b[3]+ry]
         except Exception as exc:
             self._publish_status("error", f"inference failed: {exc}", frame_id=frame.frame_id)
             return
@@ -813,6 +835,7 @@ class YoloDetectorNode(Node):
         auto_grasp_permitted = bool(detections) and ambiguous_reason is None
 
         payload = {
+            "transaction_id": f"pick-{frame.stamp_ns}",
             "stamp_sec": frame.stamp_ns // 1_000_000_000,
             "stamp_nanosec": frame.stamp_ns % 1_000_000_000,
             "frame_id": frame.frame_id,
@@ -856,6 +879,31 @@ class YoloDetectorNode(Node):
 
         if self._publish_debug_image:
             self._debug_image_pub.publish(self._draw_detections(frame, detections))
+        if self._run_mode == "one_shot":
+            self._one_shot_complete = True
+            self._frame = None
+            if self._release_after_inference:
+                self._release_backend()
+            self._publish_status(
+                "ok", "one_shot_complete", frame_id=frame.frame_id,
+                stamp_ns=frame.stamp_ns, inference_count=1,
+                backend_released=self._release_after_inference,
+            )
+
+    def _release_backend(self) -> None:
+        self._model = None
+        self._trt_context = None
+        self._trt_engine = None
+        self._trt_runtime = None
+        self._trt_contract = None
+        self._backend_ready = False
+        torch_module = self._torch_module
+        self._torch_module = None
+        if torch_module is not None:
+            try:
+                torch_module.cuda.empty_cache()
+            except Exception:
+                pass
 
 
 def main() -> None:

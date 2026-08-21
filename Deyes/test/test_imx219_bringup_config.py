@@ -64,6 +64,25 @@ def test_cpp_capture_config_enables_rotation() -> None:
     assert "swap_left_right: false" in content
 
 
+def test_cpp_capture_watchdog_is_exposed_with_conservative_defaults() -> None:
+    config_content = CONFIG_PATH.read_text(encoding="utf-8")
+    launch_content = LAUNCH_PATH.read_text(encoding="utf-8")
+    node_content = (
+        ROOT / "src" / "deyes_capture_cpp" / "src" / "imx219_stereo_capture_node.cpp"
+    ).read_text(encoding="utf-8")
+
+    assert "capture_stall_sec: 2.0" in config_content
+    assert "capture_startup_grace_sec: 8.0" in config_content
+    assert 'DeclareLaunchArgument("capture_stall_sec", default_value="2.0")' in launch_content
+    assert 'DeclareLaunchArgument("capture_startup_grace_sec", default_value="8.0")' in launch_content
+    assert "respawn=True" in launch_content
+    assert "respawn_delay=5.0" in launch_content
+    assert "fail_fast_if_capture_stalled();" in node_content
+    assert "pull_timeout_count_" in node_content
+    assert '"capture_stall_recovery"' in node_content
+    assert "std::_Exit(75);" in node_content
+
+
 def test_cuda_depth_defaults_prioritize_stable_output() -> None:
     content = CUDA_DEPTH_CONFIG_PATH.read_text(encoding="utf-8")
     assert "max_sync_diff_ms: 10.0" in content

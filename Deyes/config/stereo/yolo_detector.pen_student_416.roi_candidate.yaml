@@ -1,0 +1,18 @@
+yolo_detector_node:
+  ros__parameters:
+    image_topic: "/x1/snapshot/left_rect"
+    backend: "tensorrt"
+    model_path: ""
+    input_width: 416
+    input_height: 416
+    roi_x: 280
+    roi_y: 380
+    roi_width: 290
+    roi_height: 60
+    conf_threshold: 0.35
+    iou_threshold: 0.45
+    run_mode: "one_shot"
+    expected_max_targets: 1
+    class_names_json: '{"0":"pen"}'
+    allowed_class_ids_json: "[0]"
+    tensorrt_output_layout: "yolov5"

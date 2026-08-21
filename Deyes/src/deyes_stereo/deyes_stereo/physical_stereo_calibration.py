@@ -76,9 +76,25 @@ def image_to_gray(message: Any) -> np.ndarray:
 def find_corners(gray: np.ndarray, board_inner_corners: tuple[int, int]) -> Optional[np.ndarray]:
     flags = cv2.CALIB_CB_EXHAUSTIVE | cv2.CALIB_CB_ACCURACY
     found, corners = cv2.findChessboardCornersSB(gray, board_inner_corners, flags)
+    if found:
+        return corners.reshape(-1, 2).astype(np.float32)
+
+    # Printed or slightly curved boards are sometimes rejected by the stricter
+    # SB detector even though the classic detector can still provide accurate,
+    # sub-pixel corners.  Keeping this fallback in the shared helper makes live
+    # capture and the compute-time recheck use exactly the same detector.
+    classic_flags = cv2.CALIB_CB_ADAPTIVE_THRESH | cv2.CALIB_CB_NORMALIZE_IMAGE
+    found, corners = cv2.findChessboardCorners(gray, board_inner_corners, classic_flags)
     if not found:
         return None
-    return corners.reshape(-1, 2).astype(np.float32)
+    refined = cv2.cornerSubPix(
+        gray,
+        corners,
+        (5, 5),
+        (-1, -1),
+        (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001),
+    )
+    return refined.reshape(-1, 2).astype(np.float32)
 
 
 def blur_score(gray: np.ndarray) -> float:

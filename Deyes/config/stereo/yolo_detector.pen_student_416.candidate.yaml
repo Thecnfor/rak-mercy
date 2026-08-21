@@ -1,0 +1,28 @@
+# Candidate only. Build the TensorRT FP16 engine on the target Jetson, then set
+# model_path and expected_model_sha256 before enabling this profile.
+yolo_detector_node:
+  ros__parameters:
+    image_topic: "/x1/snapshot/left_rect"
+    output_topic: "/x1/detection/boxes"
+    status_topic: "/x1/detection/boxes_status"
+    debug_image_topic: "/x1/detection/debug_image"
+    publish_period_sec: 0.12
+    backend: "tensorrt"
+    model_path: ""
+    device: "cuda:0"
+    conf_threshold: 0.35
+    iou_threshold: 0.45
+    input_width: 416
+    input_height: 416
+    max_detections: 4
+    publish_debug_image: false
+    class_names_json: '{"0":"pen"}'
+    model_id: "pen-yolov5-student-01875-416-candidate-v1"
+    expected_model_sha256: ""
+    expected_class_count: 1
+    tensorrt_output_layout: "yolov5"
+    expected_max_targets: 1
+    duplicate_iou: 0.80
+    run_mode: "one_shot"
+    release_backend_after_inference: true
+    allowed_class_ids_json: "[0]"
