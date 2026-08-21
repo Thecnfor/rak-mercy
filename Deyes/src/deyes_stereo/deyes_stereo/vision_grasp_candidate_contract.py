@@ -18,6 +18,7 @@ from .pen_grasp_contract import build_pen_candidates, feature_matches_depth_stam
 
 CAMERA_CANDIDATE_SCHEMA = "vision_grasp_candidates/camera_optical/v1"
 CAMERA_OPTICAL_FRAME = "left_camera_optical_frame"
+COORDINATE_TEMPLATE_SCHEMA = "coordinate_chain_requests/camera_optical/v1"
 
 
 def _stamp_parts(stamp_ns: int) -> dict[str, int]:
@@ -120,4 +121,21 @@ def build_camera_optical_pen_candidates(
         "camera_optical_frame": depth_frame_id, "valid": valid,
         "reason": "ok" if valid else "candidate_invalid", "candidate_count": len(candidates),
         "candidates": candidates, "trusted_for_grasp": False, "physical_execution_eligible": False,
+    }
+
+
+def coordinate_chain_templates(result: Mapping[str, Any]) -> dict[str, Any]:
+    """Extract only valid non-executable point templates for the TF2 owner."""
+    candidates = result.get("candidates") if isinstance(result.get("candidates"), list) else []
+    requests = [
+        {"target_id": item.get("target_id"), "candidate_valid": True, **dict(item["coordinate_chain_point"])}
+        for item in candidates
+        if isinstance(item, Mapping) and item.get("valid") is True and isinstance(item.get("coordinate_chain_point"), Mapping)
+    ]
+    return {
+        "schema": COORDINATE_TEMPLATE_SCHEMA, "stamp_sec": int(result.get("stamp_sec", 0) or 0),
+        "stamp_nanosec": int(result.get("stamp_nanosec", 0) or 0),
+        "valid": bool(requests) and result.get("valid") is True,
+        "reason": str(result.get("reason") or "candidate_invalid"),
+        "physical_execution_eligible": False, "requests": requests,
     }

@@ -39,6 +39,23 @@ $env:PYTHONPATH=(Resolve-Path Deyes/src/deyes_stereo).Path
 python -m pytest Deyes/test/test_vision_grasp_candidate_contract.py -q
 ```
 
+## ROS 2 perception wrapper
+
+`vision_grasp_candidate` is the runtime wrapper around the exact same pure
+function. It subscribes to `/x1/detection/pen_features`, `/x1/stereo/depth`,
+the matching rectified `CameraInfo`, and `/x1/ground/plane`. It publishes
+`/x1/grasp/candidates_camera` plus
+`/x1/grasp/candidates_camera/coordinate_chain_templates`. It has no TF,
+motion, gripper, or robot client. Start it only after the upstream rectified
+image/depth/plane producers are configured:
+
+```bash
+ros2 launch deyes_bringup vision_grasp_candidate.launch.py
+```
+
+The default cache and target-age gate are both 0.50 seconds. A source frame
+must be `left_camera_optical_frame`; Isaac inputs must remap to that frame.
+
 The tests cover one pen, two pens, merged-YOLO-box split IDs, edge truncation,
 NaN depth, timestamp/frame/size mismatch, and target expiry. They use the same
 function and output schema for `source="replay"`, `source="isaac_sim"`, and a

@@ -1,6 +1,6 @@
 import numpy as np
 
-from deyes_stereo.vision_grasp_candidate_contract import CAMERA_CANDIDATE_SCHEMA, build_camera_optical_pen_candidates
+from deyes_stereo.vision_grasp_candidate_contract import CAMERA_CANDIDATE_SCHEMA, build_camera_optical_pen_candidates, coordinate_chain_templates
 
 
 STAMP = 9_000_000_123
@@ -55,5 +55,13 @@ def test_target_age_is_an_explicit_fail_closed_gate():
 def test_camera_frame_alias_is_not_silently_accepted():
     values = _kwargs(_feature(), depth_frame_id="Left_Camera")
     assert build_camera_optical_pen_candidates(**values)["reason"] == "camera_optical_frame_mismatch"
+
+
+def test_coordinate_chain_templates_keep_only_valid_camera_points():
+    accepted = coordinate_chain_templates(build_camera_optical_pen_candidates(**_kwargs(_feature())))
+    assert accepted["valid"] and accepted["requests"][0]["kind"] == "point"
+    assert accepted["requests"][0]["source_frame"] == "left_camera_optical_frame"
+    rejected = coordinate_chain_templates(build_camera_optical_pen_candidates(**_kwargs(_feature(), now_stamp_ns=STAMP + 1_000_000_000)))
+    assert not rejected["valid"] and rejected["requests"] == [] and not rejected["physical_execution_eligible"]
     values = _kwargs(_feature(), now_stamp_ns=STAMP - 1)
     assert build_camera_optical_pen_candidates(**values)["reason"] == "target_expired"
