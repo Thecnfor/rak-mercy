@@ -20,7 +20,9 @@ from .yolo_detector_contract import (
     parse_allowed_class_ids_json,
     TensorRTBinding,
     TensorRTEngineContract,
+    normalize_yolov8_predictions,
     validate_tensorrt_yolov5_contract,
+    validate_tensorrt_yolov8_contract,
     verify_model_sha256,
 )
 
@@ -206,6 +208,7 @@ class YoloDetectorNode(Node):
             "model_id": "",
             "expected_model_sha256": "",
             "expected_class_count": 80,
+            "tensorrt_output_layout": "yolov5",
             "expected_max_targets": 0,
             "duplicate_iou": 0.80,
         }
@@ -229,6 +232,9 @@ class YoloDetectorNode(Node):
             self.get_parameter("expected_model_sha256").value
         ).strip()
         self._expected_class_count = int(self.get_parameter("expected_class_count").value)
+        self._tensorrt_output_layout = str(
+            self.get_parameter("tensorrt_output_layout").value
+        ).strip().lower()
         self._expected_max_targets = int(self.get_parameter("expected_max_targets").value)
         self._duplicate_iou = float(self.get_parameter("duplicate_iou").value)
         self._class_names_override = self._load_class_names_json(
@@ -436,7 +442,14 @@ class YoloDetectorNode(Node):
                         dtype=normalize_tensorrt_dtype_name(engine.get_binding_dtype(index)),
                     )
                 )
-            contract = validate_tensorrt_yolov5_contract(
+            validators = {
+                "yolov5": validate_tensorrt_yolov5_contract,
+                "yolov8": validate_tensorrt_yolov8_contract,
+            }
+            validator = validators.get(self._tensorrt_output_layout)
+            if validator is None:
+                raise ValueError("tensorrt_output_layout_must_be_yolov5_or_yolov8")
+            contract = validator(
                 bindings,
                 input_width=self._input_width,
                 input_height=self._input_height,
@@ -462,6 +475,7 @@ class YoloDetectorNode(Node):
                 model_sha256=self._model_sha256,
                 input_shape=list(contract.input_shape),
                 output_shape=list(contract.output_shape),
+                tensorrt_output_layout=contract.decoder,
                 expected_class_count=self._expected_class_count,
             )
         except Exception as exc:
@@ -574,6 +588,52 @@ class YoloDetectorNode(Node):
             )
         return detections
 
+    def _decode_yolov8_predictions(
+        self,
+        predictions: np.ndarray,
+        *,
+        frame: ImageFrame,
+        scale: float,
+        pad_x: float,
+        pad_y: float,
+    ) -> list[dict[str, Any]]:
+        rows = normalize_yolov8_predictions(
+            predictions, class_count=self._expected_class_count
+        )
+        boxes_xywh: list[list[int]] = []
+        scores: list[float] = []
+        class_ids: list[int] = []
+        for row in rows:
+            class_scores = row[4:]
+            class_id = int(np.argmax(class_scores))
+            confidence = float(class_scores[class_id])
+            if confidence < self._conf_threshold:
+                continue
+            cx, cy, w, h = [float(value) for value in row[:4]]
+            x0 = float(np.clip((cx - 0.5 * w - pad_x) / max(scale, 1e-6), 0.0, frame.width - 1.0))
+            y0 = float(np.clip((cy - 0.5 * h - pad_y) / max(scale, 1e-6), 0.0, frame.height - 1.0))
+            x1 = float(np.clip((cx + 0.5 * w - pad_x) / max(scale, 1e-6), x0 + 1.0, frame.width))
+            y1 = float(np.clip((cy + 0.5 * h - pad_y) / max(scale, 1e-6), y0 + 1.0, frame.height))
+            boxes_xywh.append([int(round(x0)), int(round(y0)), max(1, int(round(x1 - x0))), max(1, int(round(y1 - y0)))])
+            scores.append(confidence)
+            class_ids.append(class_id)
+        if not boxes_xywh:
+            return []
+        selected = cv2.dnn.NMSBoxes(boxes_xywh, scores, self._conf_threshold, self._iou_threshold)
+        if selected is None or len(selected) == 0:
+            return []
+        detections: list[dict[str, Any]] = []
+        for index in np.asarray(selected).reshape(-1).tolist()[: self._max_detections]:
+            x, y, w, h = boxes_xywh[int(index)]
+            class_id = class_ids[int(index)]
+            detections.append({
+                "class_id": class_id,
+                "class_name": self._class_names.get(class_id, f"class_{class_id}"),
+                "confidence": compact_float(scores[int(index)]),
+                "bbox_xyxy": [compact_float(x), compact_float(y), compact_float(x + w), compact_float(y + h)],
+            })
+        return detections
+
     def _infer_ultralytics(self, frame: ImageFrame) -> tuple[list[dict[str, Any]], float]:
         started = time.perf_counter()
         results = self._model.predict(
@@ -674,13 +734,17 @@ class YoloDetectorNode(Node):
         if not ok:
             raise RuntimeError("TensorRT execute_v2 returned false")
         outputs = output_tensor.detach().cpu().numpy()
-        return self._decode_yolo_predictions(
-            outputs,
-            frame=frame,
-            scale=scale,
-            pad_x=pad_x,
-            pad_y=pad_y,
-        ), inference_ms
+        if self._trt_contract.decoder == "yolov5":
+            detections = self._decode_yolo_predictions(
+                outputs, frame=frame, scale=scale, pad_x=pad_x, pad_y=pad_y
+            )
+        elif self._trt_contract.decoder == "yolov8":
+            detections = self._decode_yolov8_predictions(
+                outputs, frame=frame, scale=scale, pad_x=pad_x, pad_y=pad_y
+            )
+        else:  # Contract construction should make this unreachable.
+            raise RuntimeError("validated_tensorrt_decoder_is_unknown")
+        return detections, inference_ms
 
     def _draw_detections(self, frame: ImageFrame, detections: list[dict[str, Any]]) -> Image:
         canvas = frame.bgr.copy()

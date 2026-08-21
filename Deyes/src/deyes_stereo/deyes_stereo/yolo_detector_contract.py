@@ -8,6 +8,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
+import numpy as np
+
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
@@ -25,12 +27,13 @@ class TensorRTBinding:
 
 @dataclass(frozen=True)
 class TensorRTEngineContract:
-    """Validated static TensorRT layout used by the YOLOv5 decoder."""
+    """Validated static TensorRT layout used by one explicit decoder."""
 
     input_index: int
     output_index: int
     input_shape: tuple[int, int, int, int]
     output_shape: tuple[int, int, int]
+    decoder: str
 
 
 def normalize_sha256(value: str) -> str:
@@ -132,7 +135,74 @@ def validate_tensorrt_yolov5_contract(
             int(output_binding.shape[1]),
             int(output_binding.shape[2]),
         ),
+        decoder="yolov5",
     )
+
+
+def validate_tensorrt_yolov8_contract(
+    bindings: Sequence[TensorRTBinding], *, input_width: int, input_height: int, class_count: int
+) -> TensorRTEngineContract:
+    """Validate the explicit YOLOv8 detection-export ABI.
+
+    This is intentionally separate from the YOLOv5 validator.  YOLOv8 detection
+    exports use ``[1, 4+C, N]`` (xywh plus class scores, without objectness), so
+    accepting them through the YOLOv5 decoder would silently corrupt confidence
+    and bounding boxes.
+    """
+    if input_width <= 0 or input_height <= 0:
+        raise ValueError("detector_input_dimensions_must_be_positive")
+    if class_count <= 0:
+        raise ValueError("expected_class_count_must_be_positive")
+    inputs = [binding for binding in bindings if binding.is_input]
+    outputs = [binding for binding in bindings if not binding.is_input]
+    if len(inputs) != 1 or len(outputs) != 1 or len(bindings) != 2:
+        raise ValueError("tensorrt_engine_must_have_exactly_one_input_and_one_output_binding")
+
+    input_binding, output_binding = inputs[0], outputs[0]
+    expected_input = (1, 3, input_height, input_width)
+    if input_binding.shape != expected_input:
+        raise ValueError(
+            f"tensorrt_input_shape_must_be_{expected_input}_got_{input_binding.shape}"
+        )
+    if input_binding.dtype != "float32":
+        raise ValueError("tensorrt_input_dtype_must_be_float32")
+    expected_channels = 4 + class_count
+    if (
+        len(output_binding.shape) != 3
+        or output_binding.shape[0] != 1
+        or output_binding.shape[1] != expected_channels
+        or output_binding.shape[2] <= 0
+    ):
+        raise ValueError(
+            f"tensorrt_yolov8_output_shape_must_be_[1,{expected_channels},N]_got_{output_binding.shape}"
+        )
+    if output_binding.dtype not in {"float16", "float32"}:
+        raise ValueError("tensorrt_output_dtype_must_be_float16_or_float32")
+    return TensorRTEngineContract(
+        input_index=input_binding.index,
+        output_index=output_binding.index,
+        input_shape=expected_input,
+        output_shape=tuple(int(value) for value in output_binding.shape),
+        decoder="yolov8",
+    )
+
+
+def normalize_yolov8_predictions(predictions: Any, *, class_count: int) -> np.ndarray:
+    """Return static ``[N, 4+C]`` rows or fail closed on a mismatched output."""
+    if class_count <= 0:
+        raise ValueError("expected_class_count_must_be_positive")
+    output = np.asarray(predictions)
+    expected_channels = 4 + class_count
+    if (
+        output.ndim != 3
+        or output.shape[0] != 1
+        or output.shape[1] != expected_channels
+        or output.shape[2] <= 0
+    ):
+        raise ValueError(
+            f"runtime_yolov8_output_shape_must_be_[1,{expected_channels},N]_got_{tuple(output.shape)}"
+        )
+    return np.ascontiguousarray(output[0].transpose(1, 0))
 
 
 def parse_allowed_class_ids_json(text: str) -> tuple[frozenset[int], str | None]:

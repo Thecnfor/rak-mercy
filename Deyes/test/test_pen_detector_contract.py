@@ -15,7 +15,9 @@ from deyes_stereo.yolo_detector_contract import (  # noqa: E402
     normalize_tensorrt_dtype_name,
     parse_allowed_class_ids_json,
     TensorRTBinding,
+    normalize_yolov8_predictions,
     validate_tensorrt_yolov5_contract,
+    validate_tensorrt_yolov8_contract,
     verify_model_sha256,
 )
 
@@ -119,6 +121,37 @@ def test_tensorrt_contract_rejects_ambiguous_or_non_yolov5_layouts() -> None:
             raise AssertionError("unsafe TensorRT engine layout was accepted")
 
 
+def test_tensorrt_yolov8_contract_requires_explicit_transposed_single_io_layout() -> None:
+    contract = validate_tensorrt_yolov8_contract(
+        [
+            TensorRTBinding(0, "images", True, (1, 3, 640, 640), "float32"),
+            TensorRTBinding(1, "output0", False, (1, 5, 8400), "float32"),
+        ],
+        input_width=640,
+        input_height=640,
+        class_count=1,
+    )
+    assert contract.decoder == "yolov8"
+    assert contract.output_shape == (1, 5, 8400)
+
+
+def test_yolov8_prediction_normalization_transposes_anchors_without_guessing() -> None:
+    import numpy as np
+
+    output = np.zeros((1, 5, 2), dtype=np.float32)
+    output[0, :, 0] = [320.0, 160.0, 40.0, 20.0, 0.9]
+    rows = normalize_yolov8_predictions(output, class_count=1)
+    assert rows.shape == (2, 5)
+    assert rows[0, :4].tolist() == [320.0, 160.0, 40.0, 20.0]
+    assert abs(float(rows[0, 4]) - 0.9) < 1e-6
+    try:
+        normalize_yolov8_predictions(np.zeros((1, 6, 2), dtype=np.float32), class_count=1)
+    except ValueError as exc:
+        assert "runtime_yolov8_output_shape" in str(exc)
+    else:  # pragma: no cover
+        raise AssertionError("wrong YOLOv8 output shape was accepted")
+
+
 def test_model_digest_is_mandatory_and_normalized() -> None:
     digest = "AB" * 32
     assert normalize_sha256(digest) == digest.lower()
@@ -164,7 +197,9 @@ def test_node_enforces_identity_and_runtime_shape_contract() -> None:
     assert '"model_id": ""' in content
     assert '"expected_model_sha256": ""' in content
     assert "model_sha256_mismatch" in content
-    assert "validate_tensorrt_yolov5_contract(" in content
+    assert "validate_tensorrt_yolov5_contract," in content
+    assert "validate_tensorrt_yolov8_contract," in content
+    assert '"tensorrt_output_layout": "yolov5"' in content
     assert "runtime_output_shape_does_not_match_validated_tensorrt_contract" in content
 
 

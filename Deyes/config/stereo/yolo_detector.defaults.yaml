@@ -37,6 +37,8 @@ yolo_detector_node:
     model_id: ""
     expected_model_sha256: ""
     expected_class_count: 80
+    # Explicit decoder ABI; keep yolov5 unless the engine contract is verified.
+    tensorrt_output_layout: "yolov5"
     # 0 leaves count unconstrained for generic detector profiles.
     expected_max_targets: 0
     duplicate_iou: 0.80

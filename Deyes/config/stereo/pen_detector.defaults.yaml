@@ -2,9 +2,9 @@
 # 训练数据必须把 pen 作为唯一类别，并固定为 class 0；不要把 COCO 预训练模型
 # 当作笔检测模型使用。model_path 为空时节点不会加载任何后端（fail-closed）。
 #
-# TensorRT 解析器仅支持 YOLOv5-style 输出 [1, N, 5+C]：xywh + objectness + class
-# scores。不能直接填入 YOLOv8、YOLO11 或 YOLO26 导出的 engine；它们需使用相应
-# 后处理适配器，或先导出为本节点明确验证过的 YOLOv5-style 输出契约。
+# TensorRT decoder is explicit: ``yolov5`` consumes [1,N,5+C] while ``yolov8``
+# consumes [1,4+C,N].  Never switch this parameter without inspecting the actual
+# engine bindings on the target Jetson.
 yolo_detector_node:
   ros__parameters:
     image_topic: "/x1/stereo/debug/left_rect"
@@ -27,6 +27,7 @@ yolo_detector_node:
     model_id: ""
     expected_model_sha256: ""
     expected_class_count: 1
+    tensorrt_output_layout: "yolov5"
     # The finals table can contain several pens.  Each accepted box is processed
     # independently downstream and assigned a stable target_id.
     expected_max_targets: 4
