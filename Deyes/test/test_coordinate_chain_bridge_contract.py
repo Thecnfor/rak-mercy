@@ -1,5 +1,6 @@
 from deyes_stereo.coordinate_chain_bridge_contract import build_coordinate_chain_requests
 from deyes_stereo.tf_frame_probe_contract import build_site_template
+from pathlib import Path
 
 
 VALID_STATUS = {"trusted_for_grasp": True, "physical_validated": True, "tf_published": True}
@@ -22,3 +23,11 @@ def test_tf_probe_template_exposes_discovery_without_using_it_as_a_default():
     template = build_site_template(["base_link", "left_arm_tool_real", "right_gripper_real"])
     assert template["tf_chain_audit_node"]["ros__parameters"]["required_end_effector_frames"] == []
     assert template["unverified_discovery_hints"] == ["left_arm_tool_real", "right_gripper_real"]
+
+
+def test_coordinate_bridge_subscribes_to_the_vision_candidate_output_topic():
+    root = Path(__file__).resolve().parents[1]
+    config = (root / "config" / "stereo" / "coordinate_chain_tf2.defaults.yaml").read_text(encoding="utf-8")
+    node = (root / "src" / "deyes_stereo" / "deyes_stereo" / "coordinate_chain_candidate_bridge_node.py").read_text(encoding="utf-8")
+    assert 'candidate_topic: "/x1/grasp/candidates_camera"' in config
+    assert '"candidate_topic": "/x1/grasp/candidates_camera"' in node

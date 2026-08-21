@@ -20,7 +20,9 @@ tf_chain_audit_node:
 coordinate_chain_candidate_bridge_node:
   ros__parameters:
     # Point at the camera-optical candidate producer; no candidate bypasses TF2.
-    candidate_topic: "/x1/grasp/camera_candidates"
+    # Produced by vision_grasp_candidate.  Keep this exact plural spelling:
+    # a mismatched topic silently prevents the camera->TF2 chain from running.
+    candidate_topic: "/x1/grasp/candidates_camera"
     request_topic: "/x1/coordinate_chain/request"
     status_topic: "/x1/coordinate_chain/bridge_status"
     extrinsics_status_topic: "/x1/stereo/extrinsics_status"

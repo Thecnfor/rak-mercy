@@ -16,7 +16,7 @@ from .coordinate_chain_bridge_contract import build_coordinate_chain_requests
 class CoordinateChainCandidateBridgeNode(Node):
     def __init__(self) -> None:
         super().__init__("coordinate_chain_candidate_bridge_node")
-        for name, value in {"candidate_topic": "/x1/grasp/camera_candidates", "request_topic": "/x1/coordinate_chain/request", "status_topic": "/x1/coordinate_chain/bridge_status", "extrinsics_status_topic": "/x1/stereo/extrinsics_status", "target_frame": ""}.items():
+        for name, value in {"candidate_topic": "/x1/grasp/candidates_camera", "request_topic": "/x1/coordinate_chain/request", "status_topic": "/x1/coordinate_chain/bridge_status", "extrinsics_status_topic": "/x1/stereo/extrinsics_status", "target_frame": ""}.items():
             self.declare_parameter(name, value)
         self._extrinsics_status: dict[str, Any] | None = None
         self._request_pub = self.create_publisher(String, str(self.get_parameter("request_topic").value), qos_profile_sensor_data)
