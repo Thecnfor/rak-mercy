@@ -109,6 +109,19 @@ def build_dry_run_plan(
     reasons: list[str] = []
     if not isinstance(payload, dict):
         return {"state": "rejected", "reason": "candidate_payload_invalid", "commands_emitted": False}
+    has_mission, has_epoch = "mission_id" in payload, "nav_epoch" in payload
+    if has_mission != has_epoch:
+        return {"state": "rejected", "reason": "navigation_identity_incomplete", "commands_emitted": False}
+    navigation_identity: dict[str, Any] = {}
+    if has_mission:
+        mission_id = payload.get("mission_id")
+        try:
+            nav_epoch = int(payload.get("nav_epoch"))
+        except (TypeError, ValueError):
+            return {"state": "rejected", "reason": "navigation_identity_invalid", "commands_emitted": False}
+        if isinstance(payload.get("nav_epoch"), bool) or not isinstance(mission_id, str) or not mission_id.strip() or nav_epoch <= 0:
+            return {"state": "rejected", "reason": "navigation_identity_invalid", "commands_emitted": False}
+        navigation_identity = {"mission_id": mission_id.strip(), "nav_epoch": nav_epoch}
     if int(payload.get("candidate_count", 0) or 0) != 1:
         reasons.append("candidate_count_must_be_one")
     candidates = payload.get("candidates")
@@ -205,6 +218,7 @@ def build_dry_run_plan(
         "target_id": str(candidate.get("target_id") or candidate.get("pen_id") or "pen"),
         "transaction_id": str(payload.get("transaction_id") or f"pick-{stamp_ns}"),
         "calibration_id": str(candidate.get("calibration_id") or payload.get("calibration_id") or ""),
+        **navigation_identity,
         "candidate_stamp_ns": stamp_ns,
         "tool_orientation_contract": "columns=[gripper_long_axis, lateral_axis, outbound_approach_axis]",
         "navigation_gate_included": include_navigation_gate,
@@ -230,6 +244,19 @@ def build_plan_from_coordinate_result(
         return {"state":"rejected","reason":"coordinate_result_not_trusted_for_execution","commands_emitted":False}
     if not candidate_id or transaction_id != f"pick-{stamp}" or not calibration_id:
         return {"state":"rejected","reason":"coordinate_transaction_identity_invalid","commands_emitted":False}
+    has_mission, has_epoch = "mission_id" in coordinate, "nav_epoch" in coordinate
+    if has_mission != has_epoch:
+        return {"state":"rejected","reason":"coordinate_navigation_identity_incomplete","commands_emitted":False}
+    navigation_identity: dict[str, Any] = {}
+    if has_mission:
+        mission_id = coordinate.get("mission_id")
+        try:
+            nav_epoch = int(coordinate.get("nav_epoch"))
+        except (TypeError, ValueError):
+            return {"state":"rejected","reason":"coordinate_navigation_identity_invalid","commands_emitted":False}
+        if isinstance(coordinate.get("nav_epoch"), bool) or not isinstance(mission_id, str) or not mission_id.strip() or nav_epoch <= 0:
+            return {"state":"rejected","reason":"coordinate_navigation_identity_invalid","commands_emitted":False}
+        navigation_identity = {"mission_id": mission_id.strip(), "nav_epoch": nav_epoch}
     candidate = {
         "valid": True, "trusted_for_grasp": True, "target_id": candidate_id,
         "target_frame": "base_link", "grasp_point_base_m": coordinate.get("grasp_point_base_m"),
@@ -241,7 +268,7 @@ def build_plan_from_coordinate_result(
     envelope = {
         "valid": True, "trusted_for_grasp": True, "candidate_count": 1,
         "stamp_sec": stamp // 1_000_000_000, "stamp_nanosec": stamp % 1_000_000_000,
-        "transaction_id": transaction_id, "calibration_id": calibration_id, "candidates": [candidate],
+        "transaction_id": transaction_id, "calibration_id": calibration_id, **navigation_identity, "candidates": [candidate],
     }
     return build_dry_run_plan(
         envelope, now_stamp_ns=now_stamp_ns, limits=limits,

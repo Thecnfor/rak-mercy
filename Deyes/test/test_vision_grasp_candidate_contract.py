@@ -65,3 +65,14 @@ def test_coordinate_chain_templates_keep_only_valid_camera_points():
     assert not rejected["valid"] and rejected["requests"] == [] and not rejected["physical_execution_eligible"]
     values = _kwargs(_feature(), now_stamp_ns=STAMP - 1)
     assert build_camera_optical_pen_candidates(**values)["reason"] == "target_expired"
+
+
+def test_snapshot_plane_navigation_identity_is_copied_or_rejected_as_a_pair():
+    values=_kwargs(_feature())
+    values["plane_payload"]={**values["plane_payload"],"mission_id":"mission-7","nav_epoch":3}
+    result=build_camera_optical_pen_candidates(**values)
+    assert result["mission_id"]=="mission-7" and result["nav_epoch"]==3
+    assert coordinate_chain_templates(result)["mission_id"]=="mission-7"
+    values=_kwargs(_feature())
+    values["plane_payload"]={**values["plane_payload"],"mission_id":"mission-7"}
+    assert build_camera_optical_pen_candidates(**values)["reason"]=="navigation_identity_incomplete"

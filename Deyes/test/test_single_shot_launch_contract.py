@@ -18,3 +18,10 @@ def test_action_interfaces_expose_feedback_cancelable_stage_boundaries():
     gripper=(root/"ExecuteGripper.action").read_text(encoding="utf-8")
     assert "transaction_id" in cartesian and "tracking_error_m" in cartesian and "failure_code" in cartesian
     assert "transaction_id" in gripper and "current_value" in gripper and "failure_code" in gripper
+
+
+def test_executor_status_exposes_navigation_and_execution_trust_identity():
+    root=Path(__file__).resolve().parents[1]
+    source=(root/"src/deyes_stereo/deyes_stereo/single_shot_pick_executor_node.py").read_text(encoding="utf-8")
+    for field in ('"mission_id"', '"nav_epoch"', '"calibration_id"', '"dry_run"', '"trusted_for_execution"'):
+        assert field in source

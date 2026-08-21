@@ -1,0 +1,4 @@
+# Copy outside Git and fill only after the table-front pose is verified onsite.
+# Empty allowlist intentionally blocks every navigation request.
+schema: pick_navigation_site/v1
+allowed_targets: []

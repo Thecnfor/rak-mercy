@@ -17,9 +17,27 @@
 
 任何物理抓取须遵守 `docs/EMERGENCY_HANDOFF_20260821_SINGLE_SHOT_PICK.md` 的标定、dry-run 与串口占用门禁。
 
+## 导航—抓取统一入口
+
+统一 dry-run 启动入口为：
+
+```bash
+ros2 launch deyes_bringup navigation_single_shot_pick.launch.py
+```
+
+它不会直接控制底盘；只有收到同一 `mission_id/nav_epoch` 的导航成功、
+定位误差和连续静止证据后，才允许 Deyes 冻结一帧。事务身份会继续贯穿
+深度、TF、规划和执行状态，失败后锁定，必须显式 reset 或重启。
+
+当前底盘导航仍是 ROS 1 `move_base`。默认禁用的适配器
+`scripts/pick_navigation_adapter_ros1.py` 通过 `ros1_bridge` 只向 ROS 2
+提供可审计的导航证据；它不直接发布 `cmd_vel`、不自动重试，并要求现场
+确认的目标白名单。部署步骤见
+`Deyes/tools/navigation_integration_workflow.md`。
+
 ## ROS 1 导航资产（已从 GitHub 合并）
 
-`maps/` 与 `scripts/goals_launcher.py` 是历史 ROS 1 Noetic 导航资产，包含已记录的地图、目标点和离线对比图。它们与 ROS 2 抓取系统独立，导入仅供版本保存、离线审阅与经现场负责人批准后的验证。
+`maps/` 与 `scripts/goals_launcher.py` 是历史 ROS 1 Noetic 导航资产，包含已记录的地图、目标点和离线对比图。固定目标脚本不属于统一事务链，不得用于自动抓取；统一链只接受上述白名单适配器产生的到位证据。
 
 不要使用强制终止 ROS、硬件桥或串口占用进程的命令；运行导航或移动底盘前，须由现场负责人确认机器人状态、当前控制权和安全姿态。
 

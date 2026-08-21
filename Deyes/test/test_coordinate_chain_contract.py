@@ -34,3 +34,11 @@ def test_only_camera_frame_requests_are_accepted_and_embedded_transforms_are_ign
         validate_request({"kind": "point", "source_frame": "Left_Camera", "target_frame": "base_link", "position_m": [0, 0, 1]})
     request = validate_request({"kind": "point", "source_frame": "left_camera_optical_frame", "target_frame": "right_gripper_frame", "position_m": [0, 0, 1], "manual_translation_m": [100, 100, 100]})
     assert "manual_translation_m" not in request
+
+
+def test_navigation_identity_is_all_or_nothing_and_survives_tf_transform():
+    raw={"kind":"point","source_frame":"left_camera_optical_frame","target_frame":"base_link","position_m":[0,0,1],"mission_id":"m-1","nav_epoch":2}
+    result=transform_request(raw,np.eye(3),np.zeros(3),tf_quaternion_xyzw=[0,0,0,1])
+    assert result["mission_id"]=="m-1" and result["nav_epoch"]==2
+    with pytest.raises(ValueError,match="navigation_identity_incomplete"):
+        validate_request({k:v for k,v in raw.items() if k!="nav_epoch"})

@@ -19,6 +19,13 @@ def test_visual_candidate_bridge_only_creates_a_tf2_request_after_all_gates_pass
     assert result["requests"][0]["candidate_id"] == "pen-1"
 
 
+def test_visual_candidate_bridge_preserves_complete_navigation_identity_and_rejects_partial_identity():
+    payload={**PAYLOAD,"mission_id":"m-1","nav_epoch":4}
+    result=build_coordinate_chain_requests(payload,target_frame="official_tool",extrinsics_status=VALID_STATUS)
+    assert result["published"] and result["requests"][0]["mission_id"]=="m-1" and result["requests"][0]["nav_epoch"]==4
+    assert build_coordinate_chain_requests({**PAYLOAD,"mission_id":"m-1"},target_frame="official_tool",extrinsics_status=VALID_STATUS)["reason"]=="navigation_identity_incomplete"
+
+
 def test_tf_probe_template_exposes_discovery_without_using_it_as_a_default():
     template = build_site_template(["base_link", "left_arm_tool_real", "right_gripper_real"])
     assert template["tf_chain_audit_node"]["ros__parameters"]["required_end_effector_frames"] == []

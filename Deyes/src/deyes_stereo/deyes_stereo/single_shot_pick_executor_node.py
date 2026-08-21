@@ -17,6 +17,24 @@ from std_msgs.msg import String
 from .right_arm_execution_contract import build_action_steps
 
 
+def _navigation_identity(payload: Any) -> tuple[tuple[str, int] | None, str]:
+    if not isinstance(payload, dict):
+        return None, "navigation_identity_payload_invalid"
+    has_mission, has_epoch = "mission_id" in payload, "nav_epoch" in payload
+    if has_mission != has_epoch:
+        return None, "navigation_identity_incomplete"
+    if not has_mission:
+        return None, "ok"
+    mission_id = payload.get("mission_id")
+    try:
+        nav_epoch = int(payload.get("nav_epoch"))
+    except (TypeError, ValueError):
+        return None, "navigation_identity_invalid"
+    if isinstance(payload.get("nav_epoch"), bool) or not isinstance(mission_id, str) or not mission_id.strip() or nav_epoch <= 0:
+        return None, "navigation_identity_invalid"
+    return (mission_id.strip(), nav_epoch), "ok"
+
+
 class SingleShotPickExecutorNode(Node):
     def __init__(self)->None:
         super().__init__("single_shot_pick_executor_node")
@@ -25,13 +43,13 @@ class SingleShotPickExecutorNode(Node):
         self._status=self.create_publisher(String,str(self.get_parameter("status_topic").value),qos_profile_sensor_data)
         self._cartesian=ActionClient(self,ExecuteCartesianStage,str(self.get_parameter("cartesian_action").value))
         self._gripper=ActionClient(self,ExecuteGripper,str(self.get_parameter("gripper_action").value))
-        self._steps:list[dict[str,Any]]=[];self._index=0;self._locked=False;self._hold_until:float|None=None;self._coordinate:dict[str,Any]|None=None;self._pending_plan:String|None=None;self._pending_deadline:float|None=None;self._transaction_id=""
+        self._steps:list[dict[str,Any]]=[];self._index=0;self._locked=False;self._hold_until:float|None=None;self._coordinate:dict[str,Any]|None=None;self._pending_plan:String|None=None;self._pending_deadline:float|None=None;self._transaction_id="";self._calibration_id="";self._mission_id="";self._nav_epoch=0
         self.create_subscription(String,str(self.get_parameter("coordinate_result_topic").value),self._on_coordinate,qos_profile_sensor_data)
         self.create_subscription(String,str(self.get_parameter("plan_topic").value),self._on_plan,qos_profile_sensor_data)
         self.create_timer(.05,self._timer)
 
     def _publish(self,state:str,reason:str,**extra:Any)->None:
-        payload={"schema":"single_shot_pick_execution/v1","state":state,"reason":reason,"selected_arm":"right","transaction_id":self._transaction_id,"hardware_commands_emitted":bool(extra.pop("hardware_commands_emitted",False)),**extra}
+        payload={"schema":"single_shot_pick_execution/v1","state":state,"reason":reason,"selected_arm":"right","transaction_id":self._transaction_id,"calibration_id":self._calibration_id,"mission_id":self._mission_id,"nav_epoch":self._nav_epoch,"dry_run":bool(self.get_parameter("dry_run").value),"trusted_for_execution":isinstance(self._coordinate,dict) and self._coordinate.get("trusted_for_execution") is True,"hardware_commands_emitted":bool(extra.pop("hardware_commands_emitted",False)),**extra}
         message=String();message.data=json.dumps(payload,separators=(",",":"));self._status.publish(message)
         root=str(self.get_parameter("log_root").value).strip()
         if root and self._transaction_id:
@@ -47,9 +65,17 @@ class SingleShotPickExecutorNode(Node):
         except json.JSONDecodeError as exc:self._publish("failed",f"plan_json_invalid:{exc}");return
         if reason!="ok":self._publish("failed",reason);return
         self._transaction_id=str(plan.get("transaction_id") or "")
+        self._calibration_id=str(plan.get("calibration_id") or "")
+        navigation_identity, identity_reason = _navigation_identity(plan)
+        if identity_reason != "ok":self._publish("failed", identity_reason);return
+        self._mission_id="" if navigation_identity is None else navigation_identity[0]
+        self._nav_epoch=0 if navigation_identity is None else navigation_identity[1]
         coordinate=self._coordinate
         if not isinstance(coordinate,dict) or coordinate.get("trusted_for_execution") is not True:
             self._locked=False;self._pending_plan=message;self._pending_deadline=time.monotonic()+.5;self._publish("waiting","waiting_for_trusted_coordinate_result");return
+        coordinate_navigation_identity, identity_reason = _navigation_identity(coordinate)
+        if identity_reason != "ok" or coordinate_navigation_identity != navigation_identity:
+            self._publish("failed","coordinate_plan_navigation_identity_mismatch");return
         if str(coordinate.get("transaction_id"))!=str(plan.get("transaction_id")) or str(coordinate.get("candidate_id"))!=str(plan.get("target_id")) or str(coordinate.get("calibration_id"))!=str(plan.get("calibration_id")) or int(coordinate.get("stamp_ns",-1))!=int(plan.get("candidate_stamp_ns",-2)):
             self._publish("failed","coordinate_plan_identity_mismatch");return
         if str(self.get_parameter("arm_side").value)!="right":self._publish("failed","arm_side_must_be_right");return

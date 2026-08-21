@@ -61,6 +61,11 @@ class CoordinateChainTF2Node(Node):
             # Preserve the bridge identity: an execution admission must prove
             # that its dry-run plan is for this exact transformed observation.
             result.update({"candidate_id": str(raw.get("candidate_id") or ""), "transaction_id": str(raw.get("transaction_id") or f"pick-{request['stamp_ns']}"), "trusted_for_execution": True, "calibration_id": self._trust.get("calibration_id", "")})
+            # transform_request preserves the validated optional navigation
+            # identity. Copy only after validate_request has rejected partial
+            # or malformed values, so a TF result cannot splice missions.
+            if "mission_id" in request:
+                result.update({"mission_id": request["mission_id"], "nav_epoch": request["nav_epoch"]})
             self._publish(self._result, result); self._publish(self._status, {"level": "ok", "trusted_for_execution": True, "target_frame": request["target_frame"]})
         except (ValueError, TransformException, json.JSONDecodeError) as exc:
             self._publish(self._status, {"level": "invalid", "trusted_for_execution": False, "reason": str(exc)})

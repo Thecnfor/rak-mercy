@@ -39,6 +39,60 @@ class StabilitySample:
     pair_reject_count: int = 0
 
 
+@dataclass(frozen=True)
+class NavGate:
+    """Immutable navigation-arrival evidence that authorizes one pick window."""
+
+    mission_id: str
+    nav_epoch: int
+    arrival_stamp_ns: int
+    odom_stationary_sec: float
+    linear_speed_m_s: float
+    angular_speed_rad_s: float
+
+
+def validate_nav_gate(payload: Any, *, receipt_age_sec: float, limits: SnapshotLimits = SnapshotLimits()) -> tuple[NavGate | None, str]:
+    """Accept only fresh, explicit navigation arrival evidence.
+
+    The receipt age deliberately gates a transient-local message as well: a
+    previous mission's latched authorization cannot silently arm a later pick.
+    """
+    if not isinstance(payload, dict):
+        return None, "nav_gate_not_object"
+    if payload.get("schema") != "pick_nav_gate/v1":
+        return None, "nav_gate_schema_invalid"
+    if payload.get("state") != "PICK_ARMED":
+        return None, "nav_gate_state_not_pick_armed"
+    if payload.get("pick_authorized") is not True:
+        return None, "nav_gate_not_authorized"
+    mission_id = payload.get("mission_id")
+    if not isinstance(mission_id, str) or not mission_id.strip():
+        return None, "nav_gate_mission_id_missing"
+    try:
+        nav_epoch = int(payload.get("nav_epoch"))
+        evidence = payload["arrival_evidence"]
+        if isinstance(payload.get("nav_epoch"), bool) or not isinstance(evidence, dict):
+            raise ValueError
+        arrival_stamp_ns = int(evidence["stamp_ns"])
+        stationary_sec = float(evidence["odom_stationary_sec"])
+        linear_speed = float(evidence["linear_speed_m_s"])
+        angular_speed = float(evidence["angular_speed_rad_s"])
+    except (KeyError, TypeError, ValueError):
+        return None, "nav_gate_arrival_evidence_invalid"
+    values = (receipt_age_sec, stationary_sec, linear_speed, angular_speed)
+    if nav_epoch <= 0 or arrival_stamp_ns <= 0 or not all(isfinite(value) for value in values):
+        return None, "nav_gate_arrival_evidence_invalid"
+    if receipt_age_sec < 0.0 or receipt_age_sec > limits.state_timeout_sec:
+        return None, "nav_gate_arrival_evidence_stale"
+    if stationary_sec < limits.stable_hold_sec:
+        return None, "nav_gate_odom_not_stable_long_enough"
+    if abs(linear_speed) > limits.max_base_linear_m_s:
+        return None, "nav_gate_base_linear_velocity_exceeds_limit"
+    if abs(angular_speed) > limits.max_base_angular_rad_s:
+        return None, "nav_gate_base_angular_velocity_exceeds_limit"
+    return NavGate(mission_id.strip(), nav_epoch, arrival_stamp_ns, stationary_sec, linear_speed, angular_speed), "ok"
+
+
 def _normal_delta_deg(left: np.ndarray, right: np.ndarray) -> float:
     left_norm, right_norm = float(np.linalg.norm(left)), float(np.linalg.norm(right))
     if left_norm <= 1e-9 or right_norm <= 1e-9:

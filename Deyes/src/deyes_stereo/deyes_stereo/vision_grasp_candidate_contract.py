@@ -34,6 +34,23 @@ def _rejected(reason: str, *, stamp_ns: int, source: str, camera_frame: str = ""
     }
 
 
+def _navigation_identity(payload: Mapping[str, Any]) -> tuple[dict[str, Any], str | None]:
+    """Copy optional snapshot navigation identity without accepting half an ID."""
+    has_mission, has_epoch = "mission_id" in payload, "nav_epoch" in payload
+    if not has_mission and not has_epoch:
+        return {}, None
+    if has_mission != has_epoch:
+        return {}, "navigation_identity_incomplete"
+    mission_id = payload.get("mission_id")
+    try:
+        nav_epoch = int(payload.get("nav_epoch"))
+    except (TypeError, ValueError):
+        return {}, "navigation_identity_invalid"
+    if isinstance(payload.get("nav_epoch"), bool) or not isinstance(mission_id, str) or not mission_id.strip() or nav_epoch <= 0:
+        return {}, "navigation_identity_invalid"
+    return {"mission_id": mission_id.strip(), "nav_epoch": nav_epoch}, None
+
+
 def build_camera_optical_pen_candidates(
     feature_payload: Mapping[str, Any], depth_m: np.ndarray, *, depth_stamp_ns: int,
     depth_frame_id: str, depth_width: int, depth_height: int, depth_encoding: str,
@@ -84,6 +101,9 @@ def build_camera_optical_pen_candidates(
     plane_contract = validate_dynamic_plane_for_depth(dict(plane_payload), depth_stamp_ns=stamp, depth_frame_id=depth_frame_id)
     if not plane_contract.valid:
         return _rejected("table_plane_depth_contract:" + ",".join(plane_contract.reasons), stamp_ns=stamp, source=source, camera_frame=depth_frame_id)
+    navigation_identity, identity_reason = _navigation_identity(plane_payload)
+    if identity_reason is not None:
+        return _rejected(identity_reason, stamp_ns=stamp, source=source, camera_frame=depth_frame_id)
     try:
         normal = np.asarray(plane_payload["plane_normal"], dtype=np.float64).reshape(3)
         normal /= np.linalg.norm(normal)
@@ -117,7 +137,7 @@ def build_camera_optical_pen_candidates(
         candidates.append(item)
     valid = bool(candidates) and all(item["valid"] for item in candidates)
     return {
-        "schema": CAMERA_CANDIDATE_SCHEMA, **_stamp_parts(stamp), "source": source,
+        "schema": CAMERA_CANDIDATE_SCHEMA, **_stamp_parts(stamp), "source": source, **navigation_identity,
         "transaction_id": f"pick-{stamp}",
         "camera_optical_frame": depth_frame_id, "valid": valid,
         "reason": "ok" if valid else "candidate_invalid", "candidate_count": len(candidates),
@@ -138,5 +158,6 @@ def coordinate_chain_templates(result: Mapping[str, Any]) -> dict[str, Any]:
         "stamp_nanosec": int(result.get("stamp_nanosec", 0) or 0),
         "valid": bool(requests) and result.get("valid") is True,
         "reason": str(result.get("reason") or "candidate_invalid"),
-        "physical_execution_eligible": False, "requests": requests,
+        "physical_execution_eligible": False,
+        **({key: result[key] for key in ("mission_id", "nav_epoch") if key in result}), "requests": requests,
     }

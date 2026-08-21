@@ -25,6 +25,11 @@ def build_coordinate_chain_requests(candidate_payload: Any, *, target_frame: str
     if candidate_payload.get("valid") is not True or not isinstance(candidates, list) or not candidates:
         return {"state": "rejected", "reason": "camera_candidate_not_valid", "requests": [], "published": False}
     requests: list[dict[str, Any]] = []
+    navigation_identity = {
+        key: candidate_payload.get(key)
+        for key in ("mission_id", "nav_epoch")
+        if key in candidate_payload
+    }
     for candidate in candidates:
         if not isinstance(candidate, dict) or candidate.get("valid") is not True:
             return {"state": "rejected", "reason": "camera_candidate_not_valid", "requests": [], "published": False}
@@ -42,9 +47,10 @@ def build_coordinate_chain_requests(candidate_payload: Any, *, target_frame: str
             "approach_normal_unit": candidate.get("approach_normal_camera_optical_unit"),
             "candidate_id": candidate_id, "transaction_id": str(candidate_payload.get("transaction_id") or f"pick-{stamp_ns}"),
             "quality": candidate.get("quality") if isinstance(candidate.get("quality"), dict) else {},
+            **navigation_identity,
         } if has_geometry else dict(point))
         try:
-            request = validate_request({**geometry, "target_frame": str(target_frame)})
+            request = validate_request({**geometry, **navigation_identity, "target_frame": str(target_frame)})
         except ValueError as exc:
             return {"state": "rejected", "reason": str(exc), "requests": [], "published": False}
         request["candidate_id"] = candidate_id

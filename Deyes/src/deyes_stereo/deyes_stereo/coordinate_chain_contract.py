@@ -57,6 +57,18 @@ def validate_request(payload: Any) -> dict[str, Any]:
     }
     if result["stamp_ns"] < 0:
         raise ValueError("stamp_ns_invalid")
+    has_mission, has_epoch = "mission_id" in payload, "nav_epoch" in payload
+    if has_mission != has_epoch:
+        raise ValueError("navigation_identity_incomplete")
+    if has_mission:
+        mission_id = payload.get("mission_id")
+        try:
+            nav_epoch = int(payload.get("nav_epoch"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("navigation_identity_invalid") from exc
+        if isinstance(payload.get("nav_epoch"), bool) or not isinstance(mission_id, str) or not mission_id.strip() or nav_epoch <= 0:
+            raise ValueError("navigation_identity_invalid")
+        result.update({"mission_id": mission_id.strip(), "nav_epoch": nav_epoch})
     if kind == "pose":
         result["quaternion_xyzw"] = normalize_quaternion(payload.get("quaternion_xyzw"))
     if kind == "grasp_geometry":

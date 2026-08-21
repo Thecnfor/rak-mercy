@@ -3,6 +3,10 @@ single_shot_snapshot_node:
     autonomous_once: true
     dry_run: true
     enable_live_execution: false
+    # Standalone perception may omit navigation.  The navigation wrapper
+    # explicitly overrides this to true before it permits a snapshot.
+    require_nav_gate: false
+    nav_gate_topic: "/x1/pick/nav_gate"
     required_samples: 5
     stable_hold_sec: 0.5
     max_pair_skew_ms: 10.0
