@@ -19,6 +19,7 @@ REMOTE_TEMP="${REMOTE_TEMP:-/home/${ROBOT_USER}/temp/deyes}"
 REMOTE_PROJECT_ROOT="${REMOTE_PROJECT_ROOT:-${REMOTE_WORKSPACE}/src/Deyes}"
 REMOTE_PACKAGE_ROOT="${REMOTE_PACKAGE_ROOT:-${REMOTE_PROJECT_ROOT}/src}"
 REMOTE_CONFIG_ROOT="${REMOTE_CONFIG_ROOT:-${REMOTE_PROJECT_ROOT}/config}"
+REMOTE_TOOLS_ROOT="${REMOTE_TOOLS_ROOT:-${REMOTE_PROJECT_ROOT}/tools}"
 REMOTE_OPENCV_PREFIX="${REMOTE_OPENCV_PREFIX:-}"
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "${REMOTE_HOST}")
 
@@ -76,11 +77,13 @@ if [[ "${I_UNDERSTAND_REMOTE_WRITE}" != "yes" ]]; then
 fi
 command -v rsync >/dev/null || { echo "rsync is required on the deployment host." >&2; exit 6; }
 
-"${SSH[@]}" "mkdir -p '${REMOTE_PACKAGE_ROOT}' '${REMOTE_CONFIG_ROOT}' '${REMOTE_TEMP}/build' '${REMOTE_TEMP}/logs' '${REMOTE_TEMP}/install'"
+"${SSH[@]}" "mkdir -p '${REMOTE_PACKAGE_ROOT}' '${REMOTE_CONFIG_ROOT}' '${REMOTE_TOOLS_ROOT}/systemd' '${REMOTE_TEMP}/build' '${REMOTE_TEMP}/logs' '${REMOTE_TEMP}/install'"
 rsync -a "${LOCAL_DEYES}/src/deyes_capture_cpp/" "${REMOTE_HOST}:${REMOTE_PACKAGE_ROOT}/deyes_capture_cpp/"
 rsync -a "${LOCAL_DEYES}/src/deyes_stereo/" "${REMOTE_HOST}:${REMOTE_PACKAGE_ROOT}/deyes_stereo/"
 rsync -a "${LOCAL_DEYES}/src/deyes_bringup/" "${REMOTE_HOST}:${REMOTE_PACKAGE_ROOT}/deyes_bringup/"
 rsync -a "${LOCAL_DEYES}/config/" "${REMOTE_HOST}:${REMOTE_CONFIG_ROOT}/"
+rsync -a "${LOCAL_DEYES}/tools/systemd/" "${REMOTE_HOST}:${REMOTE_TOOLS_ROOT}/systemd/"
+rsync -a "${LOCAL_DEYES}/tools/install_argus_capture_supervisor.sh" "${LOCAL_DEYES}/tools/argus_capture_supervisor.md" "${REMOTE_HOST}:${REMOTE_TOOLS_ROOT}/"
 
 "${SSH[@]}" "set -eu
   source /opt/ros/galactic/setup.bash
