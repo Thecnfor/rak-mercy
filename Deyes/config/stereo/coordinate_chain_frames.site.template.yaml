@@ -1,0 +1,12 @@
+# Copy outside the repository, then replace [] with names observed in the
+# official Mercury X1 TF tree.  No example names are supplied deliberately.
+tf_chain_audit_node:
+  ros__parameters:
+    base_frame: "base_link"
+    camera_frame: "left_camera_optical_frame"
+    required_end_effector_frames: []
+
+coordinate_chain_candidate_bridge_node:
+  ros__parameters:
+    # One confirmed official tool/TCP frame selected for this bridge instance.
+    target_frame: ""

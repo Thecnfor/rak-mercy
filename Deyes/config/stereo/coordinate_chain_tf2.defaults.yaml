@@ -16,3 +16,20 @@ tf_chain_audit_node:
     # Expected entries: left/right arm-base, tool/TCP, and gripper frames.
     required_end_effector_frames: []
     status_topic: "/x1/coordinate_chain/tf_audit"
+
+coordinate_chain_candidate_bridge_node:
+  ros__parameters:
+    # Point at the camera-optical candidate producer; no candidate bypasses TF2.
+    candidate_topic: "/x1/grasp/camera_candidates"
+    request_topic: "/x1/coordinate_chain/request"
+    status_topic: "/x1/coordinate_chain/bridge_status"
+    extrinsics_status_topic: "/x1/stereo/extrinsics_status"
+    # Must be an actual tool/TCP frame confirmed by the official robot TF tree.
+    target_frame: ""
+
+tf_frame_probe_node:
+  ros__parameters:
+    status_topic: "/x1/coordinate_chain/tf_probe"
+    # Absolute paths outside the repository, intentionally empty until selected.
+    report_path: ""
+    template_path: ""

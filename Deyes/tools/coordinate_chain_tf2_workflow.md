@@ -29,3 +29,20 @@ ros2 launch deyes_bringup coordinate_chain_tf2.launch.py
 2. `ros2 topic echo --once /x1/stereo/extrinsics_status` 必须显示三个 true；空路径、`validated:false`、仿真来源或身份不匹配必须显示 `trusted_for_grasp:false` 且没有该 TF。
 3. RViz 固定坐标设为 `base_link`，添加 TF 和 Pose；发送一个**不交给执行器**的网关请求，确认 pose 在对应左/右工具 frame 可见。对同一 stamp 执行 `ros2 run tf2_ros tf2_echo <official-tool-frame> left_camera_optical_frame`，结果应与网关一致。
 4. 以记录但不运动的多姿态采样生成 session；只有手眼 YAML 与 stereo YAML 都审查通过后，才允许第三步的 `trusted_for_execution:true`。现场不完成这些步骤时，系统保持 fail-closed。
+
+## 可部署 bringup、只读探测和视觉桥接
+
+使用单一 launch（它不移动机器人）：
+
+```bash
+ros2 launch deyes_bringup coordinate_chain_tf2.launch.py \
+  extrinsics_path:=/path/to/base_link_T_left_camera.yaml \
+  stereo_calibration_path:=/path/to/physical_stereo.yaml \
+  site_frames_path:=/path/to/confirmed_frames.yaml \
+  tf_probe_report_path:=/tmp/mercury_tf_report.yaml \
+  tf_probe_template_path:=/tmp/mercury_tf_site_template.yaml
+```
+
+`tf_frame_probe` 只读取 TF2，发布完整 frame/parent 报告并写出模板；它把含 left/right/arm/tool/TCP/gripper 的发现项列为**未验证提示**，绝不自动填入参数。操作者比较官方 URDF/驱动后，手工填 `required_end_effector_frames`（左右 arm base、tool/TCP、gripper）和 bridge 的一个真实 `target_frame`。`tf_chain_audit` 将每秒给出自动审计结果。
+
+视觉桥接订阅 camera-optical 候选并向 `/x1/coordinate_chain/request` 发布请求。外参状态为 false、缺失、未发布，或目标 frame 为空时，它只向 `/x1/coordinate_chain/bridge_status` 发布拒绝结果，绝不发布 request；桥接无执行器客户端。
