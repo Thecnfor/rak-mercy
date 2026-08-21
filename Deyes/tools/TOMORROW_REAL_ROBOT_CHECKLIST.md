@@ -146,6 +146,21 @@ ros2 topic echo /x1/stereo/extrinsics_status
 
 ## 7. 全链路 dry-run
 
+推荐直接使用统一入口（导航节点和现场话题桥应已启动）：
+
+```bash
+ROBOT_IP=192.168.137.17 \
+STEREO_CALIB=/path/physical_stereo.yaml \
+HANDEYE_CALIB=/path/base_link_T_left_camera.yaml \
+RIGHT_ARM_SITE=/path/right_arm_execution.yaml \
+bash Deyes/tools/run_real_robot_dry_run.sh
+```
+
+该脚本校验仓库内 ONNX，在当前 Jetson 构建/复用 FP16 TensorRT engine，
+计算 engine SHA，构建 ROS 2 包，并以 `dry_run=true`、
+`enable_live_execution=false` 启动相机、CUDA 深度、桌面平面和导航门禁抓取链。
+下面的手工命令仅用于拆分排障。
+
 ```bash
 ros2 launch deyes_bringup navigation_single_shot_pick.launch.py \
   dry_run:=true enable_live_execution:=false operator_confirmed:=false \

@@ -68,6 +68,7 @@ ROBOTAC决赛/
 *.zip
 *.7z
 *.onnx
+!Deyes/models/pen/pen_student_01875_416_v1.onnx
 *.engine
 *.plan
 *.pt

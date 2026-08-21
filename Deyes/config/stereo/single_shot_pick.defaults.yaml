@@ -26,7 +26,9 @@ yolo_detector_node:
     model_id: ""
     expected_model_sha256: ""
     expected_class_count: 1
-    tensorrt_output_layout: "yolov8"
+    # The checked-in edge model is the distilled YOLOv5 student.  A mismatched
+    # layout silently corrupts decoded boxes, so keep this explicit.
+    tensorrt_output_layout: "yolov5"
     expected_max_targets: 1
     allowed_class_ids_json: "[0]"
     run_mode: "one_shot"
