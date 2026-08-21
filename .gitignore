@@ -1,3 +1,4 @@
+# Claude 自用记忆系统(不提交)
 .remember/
 
 # Local environment, secrets, and editor state
@@ -6,6 +7,17 @@
 !.env.example
 .vscode/
 .idea/
+*.swp
+*.swo
+
+# Platform-generated metadata and temporary files
+._*
+.DS_Store
+.Spotlight-V100
+.Trashes
+.fseventsd
+.TemporaryItems
+*~
 
 # Python and test output
 __pycache__/
@@ -21,6 +33,7 @@ htmlcov/
 
 # ROS 2 / colcon build artifacts and recorded runtime data
 build/
+devel/
 install/
 log/
 rosbag*/
@@ -28,6 +41,7 @@ rosbag*/
 *.db3
 *.mcap
 *.active
+x1_pre_staff_reconfig_*/
 
 # JavaScript dependencies and generated bundles
 node_modules/
@@ -46,7 +60,9 @@ tmp/
 *.log
 *.pcd
 
-# Offline binary assets: inventory them in depends/ASSETS.md, do not commit them.
+# Offline binary assets and competition media
+ROBOTAC视频素材/
+ROBOTAC决赛/
 *.tar.gz
 *.tgz
 *.zip
