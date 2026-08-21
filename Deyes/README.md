@@ -1,5 +1,8 @@
 # Deyes 双目摄像头可信测距
 
+导航负责人明日联调请先阅读：
+[`tools/NAVIGATION_DEYES_INTEGRATION_HANDOFF.md`](tools/NAVIGATION_DEYES_INTEGRATION_HANDOFF.md)。
+
 本目录用于 Mercury X1 的双目摄像头实机开发，当前优先目标不是“生成一张深度图”，而是在 `0.20-1.00 m` 范围内输出带坐标定义、标定版本、时间戳、有效性和失败原因的可信距离结果。
 
 ## 当前范围
