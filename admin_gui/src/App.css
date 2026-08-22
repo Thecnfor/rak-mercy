@@ -1,0 +1,23 @@
+.deyes-sidebar-card {
+  border: 1px solid rgb(255 255 255 / 0.08);
+  background:
+    linear-gradient(180deg, rgb(10 18 28 / 0.94), rgb(8 13 22 / 0.98)),
+    linear-gradient(145deg, rgb(20 35 52 / 0.18), transparent 36%);
+  backdrop-filter: blur(20px);
+  border-radius: 34px;
+  padding: 24px;
+  box-shadow: 0 20px 70px rgb(0 0 0 / 0.35);
+}
+
+.deyes-sidebar-item {
+  position: relative;
+  overflow: hidden;
+}
+
+.deyes-sidebar-item::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(135deg, rgb(85 193 255 / 0.08), transparent 55%);
+  pointer-events: none;
+}

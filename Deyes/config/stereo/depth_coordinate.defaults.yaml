@@ -1,0 +1,19 @@
+depth_coordinate_node:
+  ros__parameters:
+    depth_topic: "/x1/stereo/depth"
+    camera_info_topic: "/x1/left_camera/camera_info"
+    target_frame: "base_link"
+    heatmap_topic: "/x1/stereo/base_heatmap"
+    status_topic: "/x1/stereo/base_heatmap_status"
+    sample_step: 2
+    max_points: 4000
+    publish_period_sec: 0.20
+    transform_timeout_sec: 0.05
+    min_depth_m: 0.20
+    max_depth_m: 1.00
+    use_tf_transform: true
+    # Do not turn a missing TF into a zero-offset base_link heatmap.
+    use_manual_transform_fallback: false
+    manual_translation_m: [0.0, 0.0, 0.0]
+    manual_rpy_deg: [0.0, 0.0, 0.0]
+    source_frame_override: ""

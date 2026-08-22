@@ -1,0 +1,24 @@
+[Unit]
+Description=Deyes IMX219 stereo capture (Argus-supervised)
+After=nvargus-daemon.service
+Wants=nvargus-daemon.service
+StartLimitIntervalSec=600
+StartLimitBurst=3
+
+[Service]
+Type=simple
+# Set the actual non-root robot account in /etc/default/deyes-stereo-capture.
+User=elephant
+Group=elephant
+EnvironmentFile=/etc/default/deyes-stereo-capture
+ExecStart=/usr/local/lib/deyes/deyes-stereo-capture-exec.sh
+# Capture exits 75 only after the in-node watchdog sees an Argus/appsink stall.
+# The privileged post-stop helper restarts Argus only for that exact case.
+ExecStopPost=+/usr/local/lib/deyes/deyes-argus-recover.sh "$SERVICE_RESULT" "$EXIT_CODE" "$EXIT_STATUS"
+Restart=on-failure
+RestartSec=8
+TimeoutStopSec=10
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,28 @@
+# IMX219 双目发布节点参数（实机 Jetson 使用）
+#
+# launch 默认使用 deyes_bringup 安装的 spec 调试标定；独立运行节点时必须
+# 显式传入 Deyes/config/camera 下的物理标定文件。
+
+imx219_stereo_publisher:
+  ros__parameters:
+    left_sensor_id: 0
+    right_sensor_id: 1
+    width: 640
+    height: 360
+    fps: 30
+    calib_path: ""
+    left_image_topic: "/x1/left_camera/image_raw"
+    right_image_topic: "/x1/right_camera/image_raw"
+    left_info_topic: "/x1/left_camera/camera_info"
+    right_info_topic: "/x1/right_camera/camera_info"
+    left_frame_id: "left_camera_optical_frame"
+    right_frame_id: "right_camera_optical_frame"
+    publish_info: true
+    publish_period_sec: 0.033333333
+    target_publish_hz: 30.0
+    pair_max_skew_ms: 20.0
+    frame_stale_sec: 0.2
+    capture_retry_sleep_sec: 0.002
+    log_stats_period_sec: 2.0
+    reuse_latest_frame: false
+    output_encoding: "mono8"

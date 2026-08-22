@@ -1,0 +1,19 @@
+pick_nav_coordinator_node:
+  ros__parameters:
+    # Observation-only by default.  This node has no Nav2 ActionClient and
+    # never publishes cmd_vel, arm, or gripper commands.
+    mission_topic: "/x1/pick/nav_mission"
+    navigation_evidence_topic: "/x1/pick/navigation_evidence"
+    transaction_status_topic: "/x1/pick/transaction_status"
+    pick_execution_status_topic: "/x1/pick/execution_status"
+    nav_gate_topic: "/x1/pick/nav_gate"
+    reset_service: "/x1/pick/nav_reset"
+    gate_heartbeat_sec: 0.1
+    navigation_timeout_sec: 95.0
+    live_navigation_action: false
+    max_position_error_m: 0.05
+    max_yaw_error_rad: 0.08
+    max_linear_speed_mps: 0.01
+    max_angular_speed_radps: 0.02
+    stable_duration_sec: 0.5
+    max_evidence_age_sec: 0.35

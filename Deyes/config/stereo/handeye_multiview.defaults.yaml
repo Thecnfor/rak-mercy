@@ -1,0 +1,10 @@
+# ROS-free hand-eye collection contract.  Values describe evidence gates only;
+# this configuration has no actuator topic, service, action, or serial path.
+handeye_multiview:
+  dry_run: true
+  min_samples: 8
+  max_stamp_skew_ms: 20.0
+  min_translation_span_m: 0.08
+  min_rotation_span_deg: 15.0
+  min_distinct_pose_separation_m: 0.02
+  min_distinct_pose_rotation_deg: 5.0

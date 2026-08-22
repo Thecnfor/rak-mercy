@@ -1,0 +1,19 @@
+vision_grasp_candidate_node:
+  ros__parameters:
+    pen_features_topic: "/x1/detection/pen_features"
+    depth_topic: "/x1/stereo/depth"
+    camera_info_topic: "/x1/stereo/left/camera_info_rect"
+    plane_topic: "/x1/ground/plane"
+    output_topic: "/x1/grasp/candidates_camera"
+    coordinate_chain_templates_topic: "/x1/grasp/candidates_camera/coordinate_chain_templates"
+    status_topic: "/x1/grasp/candidates_camera/status"
+    source: "physical_topic"
+    min_depth_m: 0.20
+    max_depth_m: 2.50
+    min_plane_clearance_m: 0.004
+    edge_margin_px: 12
+    # Exact joins are retained for at most this duration; no nearest-frame fallback.
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
+    max_target_age_sec: 0.50
+    publish_period_sec: 0.08

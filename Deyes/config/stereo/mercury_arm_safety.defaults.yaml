@@ -1,0 +1,16 @@
+# Mercury X1 arm commissioning boundary.  This file is a template only:
+# the empty arm selection and equal bounds intentionally reject every request.
+# Do not fill it from a datasheet.  Populate only after slow, supervised,
+# per-arm measurement and collision review on the actual robot.
+mercury_arm_safety:
+  arm_side: ""
+  dry_run: true
+  joint_min_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  joint_max_deg: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  workspace_min_base_m: [0.0, 0.0, 0.0]
+  workspace_max_base_m: [0.0, 0.0, 0.0]
+  # Future adapter ceilings, not vendor SDK command values.
+  max_joint_speed_deg_s: 5.0
+  max_cartesian_speed_m_s: 0.02
+  max_cartesian_accel_m_s2: 0.05
+  max_gripper_effort_percent: 20.0

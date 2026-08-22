@@ -1,0 +1,49 @@
+# YOLO 检测节点默认参数。
+#
+# backend 支持三种取值：
+#   - "ultralytics"：走 PyTorch/Ultralytics，需在 Jetson 上安装 ultralytics 包。
+#                   历史 192.168.137.17 未安装 ultralytics；非当前部署目标，仅作离线/算法初版路线。
+#   - "opencv_dnn"： 走 OpenCV DNN + ONNX。当前 Jetson 默认 Python 的 cv2 为 4.2.0，
+#                   实测无法导入现有 yolov5s.onnx（onnx_importer getMatFromTensor 断言失败），
+#                   因此不作为正式路线。
+#   - "tensorrt"：   走 TensorRT engine 运行时推理。当前 Jetson 具备 tensorrt 8.5.2.2 与
+#                   torch.cuda，且 yolov5s.onnx 已被 TensorRT 成功 parse，是正式部署路线。
+#
+# model_path 约定：
+#   - ultralytics：指向 .pt 或 .onnx 模型。
+#   - opencv_dnn： 指向 .onnx 模型。
+#   - tensorrt：   必须指向 .engine 文件（由 yolov5s.onnx 通过 TensorRT 构建得到）。
+#
+# 现场离线资产建议统一放在仓库 depends/models/ 目录，并同步到 Jetson 对应路径。
+yolo_detector_node:
+  ros__parameters:
+    # Detection intended for depth fusion must be geometrically aligned with depth.
+    image_topic: "/x1/stereo/debug/left_rect"
+    output_topic: "/x1/detection/boxes"
+    status_topic: "/x1/detection/boxes_status"
+    debug_image_topic: "/x1/detection/debug_image"
+    publish_period_sec: 0.12
+    backend: "tensorrt"
+    model_path: ""
+    device: "cuda:0"
+    conf_threshold: 0.35
+    iou_threshold: 0.45
+    input_width: 640
+    input_height: 640
+    max_detections: 20
+    publish_debug_image: false
+    class_names_json: "{}"
+    # TensorRT refuses execution until both fields identify the external engine.
+    model_id: ""
+    expected_model_sha256: ""
+    expected_class_count: 80
+    # Explicit decoder ABI; keep yolov5 unless the engine contract is verified.
+    tensorrt_output_layout: "yolov5"
+    # 0 leaves count unconstrained for generic detector profiles.
+    expected_max_targets: 0
+    duplicate_iou: 0.80
+    # Use one_shot with the frozen snapshot topic on the edge deployment.
+    run_mode: "continuous"
+    release_backend_after_inference: false
+    # JSON array. [] means pass all classes; malformed input fails closed.
+    allowed_class_ids_json: "[]"

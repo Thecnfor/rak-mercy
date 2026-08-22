@@ -1,0 +1,14 @@
+string transaction_id
+string calibration_id
+string arm_side
+string action
+float64 effort_percent
+float64 timeout_sec
+---
+bool success
+string failure_code
+float64 final_value
+---
+string action
+float64 elapsed_sec
+float64 current_value

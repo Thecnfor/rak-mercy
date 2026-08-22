@@ -1,0 +1,27 @@
+# 动态桌面平面默认参数。它只提供相机相对的桌面剔除/高度证据，
+# 不代表固定抓取世界坐标，也不能替代物理验证的 base_link 外参。
+ground_plane_node:
+  ros__parameters:
+    depth_topic: "/x1/stereo/depth"
+    camera_info_topic: "/x1/stereo/left/camera_info_rect"
+    plane_topic: "/x1/ground/plane"
+    status_topic: "/x1/ground/plane_status"
+    dynamic_plane_frame: "table_plane_dynamic_debug"
+    publish_period_sec: 0.30
+    min_depth_m: 0.20
+    max_depth_m: 1.50
+    sample_step: 2
+    max_points: 6000
+    ransac_distance_threshold: 0.02
+    ransac_iterations: 120
+    min_inlier_ratio: 0.20
+    max_plane_residual_rms_m: 0.010
+    max_plane_residual_p95_m: 0.020
+    max_normal_delta_deg: 15.0
+    # Exact-stamp depth/rectified-CameraInfo pairing; no approximate sync.
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
+    pending_pair_capacity: 2
+    # Dynamic plane origins move with inliers. Keep TF disabled unless manually
+    # inspecting it; it is explicitly debug-only and never a grasp frame.
+    publish_debug_tf: false

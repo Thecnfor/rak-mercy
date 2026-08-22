@@ -1,0 +1,18 @@
+string transaction_id
+string calibration_id
+string arm_side
+string stage
+# base_link: x/y/z metres followed by vendor-validated XYZ Euler degrees.
+float64[6] pose_base
+float64 max_speed_m_s
+float64 timeout_sec
+---
+bool success
+string failure_code
+float64[6] final_pose_base
+float64[6] final_joint_deg
+---
+string stage
+float64 elapsed_sec
+float64 tracking_error_m
+float64[6] current_pose_base

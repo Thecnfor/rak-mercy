@@ -1,0 +1,9 @@
+stereo_image_proc_baseline:
+  ros__parameters:
+    namespace: "x1"
+    left_namespace: "left_camera"
+    right_namespace: "right_camera"
+    approx_sync: false
+    use_color: false
+    enable_monitor: true
+    calib_path: ""

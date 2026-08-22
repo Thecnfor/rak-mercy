@@ -1,0 +1,16 @@
+pen_feature_node:
+  ros__parameters:
+    detection_topic: "/x1/detection/boxes"
+    image_topic: "/x1/stereo/debug/left_rect"
+    output_topic: "/x1/detection/pen_features"
+    status_topic: "/x1/detection/pen_features_status"
+    sync_cache_capacity: 8
+    sync_cache_max_age_sec: 0.50
+    min_mask_pixels: 12
+    max_mask_pixels: 800
+    min_axis_length_px: 18.0
+    min_aspect_ratio: 2.0
+    min_pca_ratio: 2.0
+    edge_margin_px: 12
+    min_contrast: 8
+    morphology_kernel_px: 5
