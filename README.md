@@ -41,6 +41,25 @@ ros2 launch deyes_bringup navigation_single_shot_pick.launch.py
 
 不要使用强制终止 ROS、硬件桥或串口占用进程的命令；运行导航或移动底盘前，须由现场负责人确认机器人状态、当前控制权和安全姿态。
 
+## 比赛现场 race-day 脚本（`scripts/`）
+
+`scripts/` 现在还包含比赛当天 30 分钟冷启动流程所需的四个辅助脚本：
+
+| 脚本 | 用途 |
+|---|---|
+| `start_competition_pipeline.sh` | 一键脚本，stage 0..6（`0` 清场，`1` ROS1 nav，`2` adapter，`3` ros1_bridge，`4` ROS2 Deyes，`5` T5 send_mission，`6` T6 race_monitor，`test` 单跑 Deyes dry-run） |
+| `race_monitor.py` | 终端 6 健康面板：订阅 `/scan` `/amcl_pose` `/x1/pick/nav_mission` `/x1/pick/navigation_evidence`，subprocess 查 ROS 2 节点与 bridge topics。T1..T6 状态每秒刷新 |
+| `send_mission.py` | Python 发 mission，pose 直接从 site_yaml allowlist 读保证 byte-exact；subscribe-before-publish + 二次 publish 避开临时 publisher 与常驻 subscriber 的 TCPROS 握手 race |
+| `m2_calibrate.sh` | M2 物理双目标定（9×6 内角点 + 50 帧 capture + 3 项人工确认 compute）；候选 YAML 在 `/home/elephant/temp/deyes/calibration/<utc>/`，**不**自动入 `config/camera/` |
+
+设计上 stage 号 = Terminal 号 = T 号（`./script.sh 5` = Terminal 5 = T5 = send_mission），现场口令无歧义。`start_competition_pipeline.sh help` 在机器人本机可看完整使用说明。赛前 Mac → X1 同步：
+
+```bash
+scp scripts/{start_competition_pipeline,race_monitor,send_mission,m2_calibrate}.sh \
+    scripts/{pick_navigation_adapter_ros1,race_monitor,send_mission}.py \
+    elephant@192.168.0.121:~/scripts/
+```
+
 ## 目录结构
 
 ```
