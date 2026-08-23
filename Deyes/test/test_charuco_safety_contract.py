@@ -26,7 +26,7 @@ def test_partial_or_mismatched_charuco_ids_cannot_reach_solver():
     else: raise AssertionError("partial intersection accepted")
 
 def test_handeye_rejects_unsafe_and_degenerate_evidence():
-    payload={"drag_mode":"manual_save_pause","drag_teach_execute_called":False,"samples":[_sample(i) for i in range(12)],"rotation_axes_span_deg":{"axis_1":31,"axis_2":31}}
+    payload={"drag_mode":"manual_save_pause","drag_teach_execute_called":False,"robot_id":"x1","camera_pair_id":"pair","stereo_calibration_id":"stereo","samples":[_sample(i) for i in range(12)],"rotation_axes_span_deg":{"axis_1":31,"axis_2":31}}
     assert validate_session(payload).ready
     payload["samples"][0]["captured_while_dragging"] = True
     assert "unsafe_robot_sample" in validate_session(payload).reasons
