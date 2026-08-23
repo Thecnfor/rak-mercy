@@ -13,7 +13,7 @@
 
 ## 2. 标定板要求
 
-- 本轮唯一正式目标板型为 `checkerboard 9x6 内角点` 板。
+- 兼容入口保留 `checkerboard 9x6 内角点`；安全默认入口为 `ChArUco stereo`：8x6 squares、30 mm square、22 mm marker、`DICT_5X5_1000`。ChArUco 左右共同 ID 必须不少于 12；仍严格要求 640x360、skew <=10 ms、40–60 组（默认 50）、RMS/P95 <=0.50 px 与人工确认。
 - 记录以下信息：
   - 内角点规格（`9 x 6`）
   - 新板单个方格边长（本次必须用卡尺实测；不得继承旧 `8x7` 板的 `0.020 m`）

@@ -2,6 +2,7 @@
 import numpy as np
 from deyes_stereo.charuco_board_generator import board_metadata
 from deyes_stereo.charuco_handeye import validate_session
+from deyes_stereo.charuco_stereo import intersect
 from deyes_stereo.stereo_calibration_contract import CALIBRATION_SIZE, validation_gate
 
 def _sample(index: int) -> dict:
@@ -17,6 +18,12 @@ def test_board_dimensions_and_identity_are_fixed():
 def test_charuco_stereo_is_allowed_but_unknown_sources_fail_closed():
     assert validation_gate(sample_count=50,resolution=CALIBRATION_SIZE,reproj_rms_px=.2,epipolar_p95_px=.2,source="physical_charuco",left_right_confirmed=True,baseline_sign_confirmed=True,scale_confirmed=True,coverage_complete=True,board_inner_corners=(8,6),square_size_m=.03).validated
     assert not validation_gate(sample_count=50,resolution=CALIBRATION_SIZE,reproj_rms_px=.2,epipolar_p95_px=.2,source="sim",left_right_confirmed=True,baseline_sign_confirmed=True,scale_confirmed=True,coverage_complete=True,board_inner_corners=(8,6),square_size_m=.03).validated
+
+def test_partial_or_mismatched_charuco_ids_cannot_reach_solver():
+    left = np.zeros((12, 2), dtype=np.float32); right = np.zeros((12, 2), dtype=np.float32)
+    try: intersect(left, np.arange(12), right, np.arange(1, 13))
+    except ValueError as error: assert str(error) == "left_right_common_charuco_ids_below_12"
+    else: raise AssertionError("partial intersection accepted")
 
 def test_handeye_rejects_unsafe_and_degenerate_evidence():
     payload={"drag_mode":"manual_save_pause","drag_teach_execute_called":False,"samples":[_sample(i) for i in range(12)],"rotation_axes_span_deg":{"axis_1":31,"axis_2":31}}

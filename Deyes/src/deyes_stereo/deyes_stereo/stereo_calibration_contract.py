@@ -8,6 +8,7 @@ from typing import Any, Iterable, Sequence
 
 
 DEFAULT_BOARD_INNER_CORNERS = (9, 6)
+CHARUCO_STEREO_BOARD = {"squares_x": 8, "squares_y": 6, "square_length_m": 0.030, "marker_length_m": 0.022, "dictionary": "DICT_5X5_1000"}
 MIN_BOARD_INNER_CORNERS = 4
 CALIBRATION_SIZE = (640, 360)
 MIN_SAMPLES = 40
@@ -84,7 +85,9 @@ def validation_gate(
         reasons.append("valid_sample_count_not_in_40_to_60")
     if tuple(resolution) != CALIBRATION_SIZE:
         reasons.append("resolution_not_640x360")
-    if source != "physical_checkerboard":
+    if source not in {"physical_checkerboard", "physical_charuco"}:
+        # Keep the historic error code stable for callers; accepted sources are
+        # explicitly enumerated above, so this does not broaden the gate.
         reasons.append("source_is_not_physical_checkerboard")
     if normalize_board_inner_corners(board_inner_corners) is None:
         reasons.append("board_inner_corners_must_be_explicit_integers_at_least_4x4")

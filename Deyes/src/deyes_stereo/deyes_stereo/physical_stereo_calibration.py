@@ -22,6 +22,8 @@ import cv2
 import numpy as np
 import yaml
 
+from .charuco_stereo import detect as find_charuco_corners, intersect as intersect_charuco_ids
+
 try:  # Supports `ros2 run` and direct operator diagnostics alike.
     from .stereo_calibration_contract import (
         DEFAULT_BOARD_INNER_CORNERS,
