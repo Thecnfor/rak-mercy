@@ -18,7 +18,7 @@ import yaml
 
 REQUIRED_SOURCE_FRAME = "left_camera_optical_frame"
 REQUIRED_TARGET_FRAME = "base_link"
-REQUIRED_SOURCE = "physical_point_correspondences"
+REQUIRED_SOURCES = {"physical_point_correspondences", "physical_charuco_robot_world_handeye"}
 
 
 @dataclass(frozen=True)
@@ -86,8 +86,10 @@ def validate_extrinsics(
         reasons.append("extrinsics_not_validated")
     if document.get("operator_confirmation") is not True:
         reasons.append("operator_confirmation_missing")
-    if document.get("source") != REQUIRED_SOURCE:
+    if document.get("source") not in REQUIRED_SOURCES:
         reasons.append("source_is_not_physical_point_correspondences")
+    if document.get("source") == "physical_charuco_robot_world_handeye" and document.get("trusted_for_execution") is not True:
+        reasons.append("charuco_handeye_not_trusted_for_execution")
     if str(document.get("source_frame") or "") != REQUIRED_SOURCE_FRAME:
         reasons.append("source_frame_must_be_left_camera_optical_frame")
     if str(document.get("target_frame") or "") != REQUIRED_TARGET_FRAME:
