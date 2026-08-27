@@ -113,6 +113,7 @@ if compgen -G {base_q}/assets/depends/'*.tar.gz' >/dev/null; then
   cp {base_q}/assets/depends/*.tar.gz {home}/deyes_competition_assets/depends/
 fi
 cp {home}/deyes_competition_ws/src/Deyes/config/camera/venue_20260827_quick_stereo.yaml {home}/deyes_competition_assets/
+cp {home}/deyes_competition_ws/src/Deyes/config/camera/venue_20260827_touch_projector.yaml {home}/deyes_competition_assets/
 cp {home}/deyes_competition_ws/src/Deyes/config/stereo/competition_fixed_scene.yaml {home}/deyes_competition_assets/
 site_file="$(find {home}/deyes_competition_ws/src/Deyes/config -type f -name competition_venue_65cm.yaml | head -n 1)"
 [[ -f "$site_file" ]] || {{ echo 'missing competition_venue_65cm.yaml after config upload' >&2; exit 30; }}
@@ -131,22 +132,29 @@ actual_onnx="$(sha256sum "$ONNX" | awk '{{print tolower($1)}}')"
 if command -v trtexec >/dev/null 2>&1; then TRTEXEC="$(command -v trtexec)";
 elif [[ -x /usr/src/tensorrt/bin/trtexec ]]; then TRTEXEC=/usr/src/tensorrt/bin/trtexec;
 else echo 'trtexec not found' >&2; exit 32; fi
+trt_version="$(dpkg-query -W -f='${{Version}}' libnvinfer8 2>/dev/null || "$TRTEXEC" --version 2>&1 | tail -n 1)"
+cuda_version="$(nvcc --version 2>/dev/null | tail -n 1 || cat /usr/local/cuda/version.txt 2>/dev/null || echo unknown)"
+device_arch="$(uname -m)"
+[[ -n "$trt_version" && "$trt_version" != unknown ]] || {{ echo 'unable to determine TensorRT version' >&2; exit 36; }}
+[[ -n "$cuda_version" && "$cuda_version" != unknown ]] || {{ echo 'unable to determine CUDA version' >&2; exit 37; }}
+[[ "$device_arch" == aarch64 ]] || {{ echo "unsupported deployment architecture: $device_arch" >&2; exit 38; }}
 reuse=0
 if [[ -s "$ENGINE" && -f "$MANIFEST" ]]; then
-  ENGINE="$ENGINE" MANIFEST="$MANIFEST" python3 - <<'PY' && reuse=1 || true
+  ENGINE="$ENGINE" MANIFEST="$MANIFEST" TRT_VERSION="$trt_version" CUDA_VERSION="$cuda_version" DEVICE_ARCH="$device_arch" python3 - <<'PY' && reuse=1 || true
 import hashlib,json,os,pathlib
 e=pathlib.Path(os.environ['ENGINE']); m=json.loads(pathlib.Path(os.environ['MANIFEST']).read_text())
 assert m['onnx_sha256']=='{ONNX_SHA256}'
 assert m['engine_sha256']==hashlib.sha256(e.read_bytes()).hexdigest()
 assert m['input_shape']==[1,3,416,416] and m['output_layout']=='yolov5:[1,N,5+C]' and m['precision']=='fp16'
+assert m['model_id']=='{MODEL_ID}'
+assert m['tensorrt_version']==os.environ['TRT_VERSION'] and m['cuda_version']==os.environ['CUDA_VERSION']
+assert m['device_arch']==os.environ['DEVICE_ARCH']
 PY
 fi
 if [[ "$reuse" != 1 ]]; then
   "$TRTEXEC" --onnx="$ONNX" --saveEngine="$ENGINE" --fp16 --skipInference --shapes=images:1x3x416x416
 fi
 engine_sha="$(sha256sum "$ENGINE" | awk '{{print tolower($1)}}')"
-trt_version="$(dpkg-query -W -f='${{Version}}' libnvinfer8 2>/dev/null || "$TRTEXEC" --version 2>&1 | tail -n 1)"
-cuda_version="$(nvcc --version 2>/dev/null | tail -n 1 || cat /usr/local/cuda/version.txt 2>/dev/null || echo unknown)"
 ENGINE_SHA="$engine_sha" TRT_VERSION="$trt_version" CUDA_VERSION="$cuda_version" TRTEXEC="$TRTEXEC" MANIFEST="$MANIFEST" python3 - <<'PY'
 import json,os,pathlib,platform
 data={{"schema_version":1,"model_id":"{MODEL_ID}","onnx_sha256":"{ONNX_SHA256}",
@@ -166,7 +174,8 @@ source install/setup.bash
 CUDA_NODE="$(ros2 pkg prefix deyes_capture_cpp)/lib/deyes_capture_cpp/cuda_stereo_depth_node"
 ldd "$CUDA_NODE" | tee {home}/temp/deyes/competition/deploy_ldd.log
 ldd "$CUDA_NODE" | grep -E 'libopencv_(core|cuda)' | grep -F "$OPENCV_PREFIX/" >/dev/null || {{ echo 'CUDA node is not linked to isolated OpenCV' >&2; exit 33; }}
-if ldd "$CUDA_NODE" | grep -E 'libopencv_(core|cuda)' | grep -E '(/usr/lib|/lib/)' >/dev/null; then
+ldd "$CUDA_NODE" | awk '/libopencv_(core|cuda)/ {{for (i=1;i<=NF;i++) if ($i=="=>") print $(i+1)}}' > {home}/temp/deyes/competition/deploy_opencv_ldd_paths.txt
+if grep -E '^(/usr/lib/|/lib/)' {home}/temp/deyes/competition/deploy_opencv_ldd_paths.txt >/dev/null; then
   echo 'CUDA node leaked to system OpenCV' >&2; exit 34
 fi
 
@@ -214,8 +223,8 @@ def main() -> int:
     parser.add_argument("--force-fixed-target", action="store_true")
     parser.add_argument("--vision-dry-run-seconds", type=int, default=int(os.environ.get("DEYES_DEPLOY_VISION_SECONDS", "30")))
     args = parser.parse_args()
-    if args.force_fixed_target and not args.allow_fixed_xy_fallback:
-        parser.error("--force-fixed-target requires --allow-fixed-xy-fallback")
+    if args.force_fixed_target != args.allow_fixed_xy_fallback:
+        parser.error("--allow-fixed-xy-fallback and --force-fixed-target must be used together")
     if not args.password:
         args.password = getpass.getpass("Jetson SSH password: ")
     try:
@@ -244,7 +253,7 @@ def main() -> int:
     print(f"Incremental sync: uploaded={uploaded}, unchanged={skipped}")
     run(ssh, remote_deploy_command(args, base))
     if args.run:
-        env = ["FIXED_TABLE_HEIGHT_MM=650", "ALLOW_BBOX_CENTER=1"]
+        env = ["FIXED_TABLE_HEIGHT_MM=650", "ALLOW_BBOX_CENTER=0"]
         env.append(f"ALLOW_FIXED_XY_FALLBACK={int(args.allow_fixed_xy_fallback)}")
         env.append(f"FORCE_FIXED_TARGET={int(args.force_fixed_target)}")
         run(ssh, " ".join(env) + f" DEYES_WS={shlex.quote(args.remote_home + '/deyes_competition_ws')} bash {shlex.quote(args.remote_home + '/scripts/race_onekey_try.sh')}")

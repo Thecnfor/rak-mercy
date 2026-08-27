@@ -9,6 +9,7 @@ DEYES_INSTALL="${DEYES_INSTALL:-$DEYES_WS/install}"
 DEYES_ASSETS="${DEYES_ASSETS:-$HOME/deyes_competition_assets}"
 OPENCV_PREFIX="${DEYES_OPENCV_PREFIX:-$HOME/opencv-4.8.0-cuda}"
 CALIB_PATH="${DEYES_CALIB_PATH:-$DEYES_ASSETS/venue_20260827_quick_stereo.yaml}"
+PROJECTOR_PATH="${DEYES_PROJECTOR_PATH:-$DEYES_ASSETS/venue_20260827_touch_projector.yaml}"
 DETECTOR_CONFIG="${DEYES_DETECTOR_CONFIG:-$DEYES_ASSETS/competition_fixed_scene.yaml}"
 SITE_METADATA_PATH="${COMPETITION_SITE_METADATA:-$DEYES_ASSETS/competition_venue_65cm.yaml}"
 ENGINE_PATH="${DEYES_ENGINE_PATH:-$HOME/temp/deyes/models/pen/pen-yolov5-student-01875-416-v1.fp16.engine}"
@@ -16,7 +17,7 @@ ENGINE_MANIFEST="${DEYES_ENGINE_MANIFEST:-${ENGINE_PATH}.manifest.json}"
 EXPECTED_ONNX_SHA256="8916cbf25949d6e8b03c01e6ca1c7871aeac0ad105c931f1dd9881cb5d5a4c4e"
 
 FIXED_TABLE_HEIGHT_MM="${FIXED_TABLE_HEIGHT_MM:-650}"
-ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-1}"
+ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-0}"
 ALLOW_FIXED_XY_FALLBACK="${ALLOW_FIXED_XY_FALLBACK:-0}"
 FORCE_FIXED_TARGET="${FORCE_FIXED_TARGET:-0}"
 GROUND_PLANE_MAX_DELTA_MM="${GROUND_PLANE_MAX_DELTA_MM:-25}"
@@ -26,6 +27,7 @@ TARGET_PACKAGE="${COMPETITION_TARGET_PACKAGE:-deyes_stereo}"
 TARGET_EXECUTABLE="${COMPETITION_TARGET_EXECUTABLE:-competition_pick_target}"
 TARGET_TOPIC="${COMPETITION_TARGET_TOPIC:-/x1/competition/pick_target}"
 TARGET_ADAPTER="${COMPETITION_TARGET_ADAPTER:-$RAC_SCRIPTS/competition_target_snapshot_adapter.py}"
+GRASP_FEEDBACK_ADAPTER="${COMPETITION_GRASP_FEEDBACK_ADAPTER:-$RAC_SCRIPTS/competition_grasp_feedback_adapter.py}"
 PICK_SCRIPT="${COMPETITION_PICK_SCRIPT:-$RAC_SCRIPTS/pick_pen_degraded.py}"
 PLACE_SCRIPT="${COMPETITION_PLACE_SCRIPT:-$RAC_SCRIPTS/place_pen_degraded.py}"
 NAV_GOAL3="${COMPETITION_NAV_GOAL3:-goal3_right}"
@@ -36,6 +38,8 @@ LOG_DIR="${LOG_DIR:-$HOME/temp/deyes/competition/$TRANSACTION_ID}"
 TARGET_JSON="$LOG_DIR/target.json"
 ADMISSION_JSON="$LOG_DIR/admission.json"
 GRASP_JSON="$LOG_DIR/grasp_verification.json"
+GRASP_FEEDBACK_JSON="$LOG_DIR/grasp_feedback.json"
+PLACE_JSON="$LOG_DIR/place.json"
 TRACE_JSONL="$LOG_DIR/trace.jsonl"
 mkdir -p "$LOG_DIR"
 
@@ -65,29 +69,53 @@ die() { trace "stop" "failed" "$*" || true; printf '[race] STOP: %s (logs=%s)\n'
 bool01() { [[ "$2" == 0 || "$2" == 1 ]] || die "$1 must be 0 or 1"; }
 need_file() { [[ -f "$1" ]] || die "missing file: $1"; }
 
+terminate_pid() {
+  local pid="${1:-}" signal_name="${2:-process}"
+  [[ -n "$pid" ]] || return 0
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -INT "$pid" 2>/dev/null || true
+    for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    trace "$signal_name" "stop_escalated" "SIGTERM pid=$pid"
+    kill -TERM "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    trace "$signal_name" "stop_escalated" "SIGKILL pid=$pid"
+    kill -KILL "$pid" 2>/dev/null || true
+  fi
+  wait "$pid" 2>/dev/null || true
+}
+
 stop_vision() {
   if [[ -n "$VISION_PID" ]]; then
-    kill -INT "$VISION_PID" 2>/dev/null || true
-    wait "$VISION_PID" 2>/dev/null || true
+    terminate_pid "$VISION_PID" vision
     VISION_PID=""
     trace "vision" "stopped" "after_grasp_verification"
   fi
 }
 stop_target() {
   if [[ -n "$TARGET_PID" ]]; then
-    kill -INT "$TARGET_PID" 2>/dev/null || true
-    wait "$TARGET_PID" 2>/dev/null || true
+    terminate_pid "$TARGET_PID" competition_target_node
     TARGET_PID=""
-    trace "competition_target_node" "stopped" "after_grasp_verification"
+    trace "competition_target_node" "stopped" "after_single_target_snapshot"
   fi
 }
 cleanup() {
-  if [[ -n "$TARGET_SNAPSHOT_PID" ]]; then kill -INT "$TARGET_SNAPSHOT_PID" 2>/dev/null || true; wait "$TARGET_SNAPSHOT_PID" 2>/dev/null || true; fi
+  if [[ -n "$TARGET_SNAPSHOT_PID" ]]; then terminate_pid "$TARGET_SNAPSHOT_PID" target_snapshot_adapter; TARGET_SNAPSHOT_PID=""; fi
   stop_target || true
   stop_vision || true
-  if [[ -n "$NAV_PID" ]]; then kill -INT "$NAV_PID" 2>/dev/null || true; fi
+  if [[ -n "$NAV_PID" ]]; then terminate_pid "$NAV_PID" navigation_launch; NAV_PID=""; fi
 }
-trap cleanup EXIT INT TERM
+on_signal() {
+  trace "signal" "interrupted" "$1" || true
+  trap - INT TERM
+  exit "$2"
+}
+trap cleanup EXIT
+trap 'on_signal INT 130' INT
+trap 'on_signal TERM 143' TERM
 
 source_ros1() {
   unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
@@ -157,22 +185,40 @@ PY
 validate_target_and_write_admission() {
   TARGET_FILE="$TARGET_JSON" ADMISSION_FILE="$ADMISSION_JSON" FIXED_MM="$FIXED_TABLE_HEIGHT_MM" \
     MAX_DELTA_MM="$GROUND_PLANE_MAX_DELTA_MM" \
-    FORCE_FIXED="$FORCE_FIXED_TARGET" "$PYTHON_BIN" - <<'PY'
-import json, os, pathlib
+    FORCE_FIXED="$FORCE_FIXED_TARGET" ALLOW_FIXED="$ALLOW_FIXED_XY_FALLBACK" "$PYTHON_BIN" - <<'PY'
+import json, math, os, pathlib
 p = pathlib.Path(os.environ["TARGET_FILE"]); data = json.loads(p.read_text(encoding="utf-8"))
-if data.get("schema") not in (None, "competition_pick_target/v1"): raise SystemExit("unsupported target schema")
+if data.get("schema") != "competition_pick_target/v1": raise SystemExit("target schema must be competition_pick_target/v1")
 forced = os.environ["FORCE_FIXED"] == "1"
-if data.get("schema") == "competition_pick_target/v1":
-    if data.get("valid") is not True:
-        raise SystemExit("v1 target is not valid")
-    if data.get("trusted_for_venue_execution") is not True and not forced:
-        raise SystemExit("v1 target is not trusted for normal venue execution")
-elif data.get("valid") is False:
-    raise SystemExit("competition target is invalid")
-elif data.get("trusted_for_venue_execution") is False and not forced:
-    raise SystemExit("competition target is not trusted for normal venue execution")
-if data.get("accepted") is False or (isinstance(data.get("admission"), dict) and data["admission"].get("accepted") is False):
-    raise SystemExit("competition target rejected")
+allow_fixed = os.environ["ALLOW_FIXED"] == "1"
+if forced != allow_fixed: raise SystemExit("fixed XY fallback and forced target must be enabled together")
+if data.get("valid") is not True: raise SystemExit("v1 target is not valid")
+if data.get("commands_emitted") is not False: raise SystemExit("target commands_emitted must be false")
+if data.get("execution_allowed") is not True: raise SystemExit("target execution_allowed must be true")
+source = data.get("selection_source")
+sdk = data.get("right_arm_sdk_target_m")
+orientation = data.get("orientation_deg")
+if not isinstance(sdk, list) or len(sdk) != 3: raise SystemExit("target right_arm_sdk_target_m missing")
+sdk = [float(value) for value in sdk]
+if not all(math.isfinite(value) for value in sdk): raise SystemExit("target coordinates are not finite")
+if abs(sdk[2]-.135) > 1e-6: raise SystemExit("target contact Z is not 135mm")
+if not isinstance(orientation, list) or len(orientation) != 3: raise SystemExit("target orientation missing")
+orientation = [float(value) for value in orientation]
+if not all(math.isfinite(value) for value in orientation) or any(abs(a-b)>1e-6 for a,b in zip(orientation,(179.99,-12.,0.))):
+    raise SystemExit("target orientation is not [179.99,-12,0]deg")
+if forced:
+    if source != "fixed_xy_fallback": raise SystemExit("forced target is not an explicit fixed_xy_fallback")
+    if data.get("trusted_for_venue_execution") is not False or data.get("projector_usable_and_validated") is not False:
+        raise SystemExit("fixed fallback must preserve unusable/untrusted projector evidence")
+    if data.get("degraded") is not True or data.get("degraded_mode") != "forced_fixed_xy_marker" or data.get("force_fixed_target") is not True:
+        raise SystemExit("fixed fallback degraded metadata missing")
+    if "[400,10]mm" not in str(data.get("manual_action_required", "")):
+        raise SystemExit("fixed fallback marker instruction missing")
+else:
+    if source == "fixed_xy_fallback": raise SystemExit("fixed XY target requires explicit force")
+    if data.get("trusted_for_venue_execution") is not True or data.get("projector_usable_and_validated") is not True:
+        raise SystemExit("target is not trusted for normal venue execution")
+    if data.get("degraded") is not False: raise SystemExit("normal target cannot be marked degraded")
 plane = data.get("ground_plane") if isinstance(data.get("ground_plane"), dict) else {}
 verification_raw = data.get("height_verification")
 verification = verification_raw if isinstance(verification_raw, dict) else {}
@@ -185,10 +231,13 @@ height = verification.get("measured_table_height_mm", verification.get("observed
          plane.get("table_height_mm", plane.get("height_mm", data.get("table_height_mm")))))))
 delta = verification.get("delta_from_fixed_mm", verification.get("delta_mm"))
 fixed = float(os.environ["FIXED_MM"]); max_delta = float(os.environ["MAX_DELTA_MM"])
+if not math.isfinite(fixed) or not math.isfinite(max_delta) or max_delta < 0: raise SystemExit("table height policy is not finite")
 declared_fixed = data.get("fixed_table_height_mm", verification.get("fixed_table_height_mm"))
 declared_fixed_m = data.get("fixed_table_height_m", verification.get("fixed_table_height_m"))
-if declared_fixed is not None and abs(float(declared_fixed) - fixed) > 1e-6: raise SystemExit("target fixed table height is not 650mm")
-if declared_fixed_m is not None and abs(float(declared_fixed_m) * 1000.0 - fixed) > 1e-6: raise SystemExit("target fixed table height is not 0.650m")
+if declared_fixed is not None and (not math.isfinite(float(declared_fixed)) or abs(float(declared_fixed) - fixed) > 1e-6): raise SystemExit("target fixed table height is not 650mm")
+if declared_fixed_m is not None and (not math.isfinite(float(declared_fixed_m)) or abs(float(declared_fixed_m) * 1000.0 - fixed) > 1e-6): raise SystemExit("target fixed table height is not 0.650m")
+if height is not None and not math.isfinite(float(height)): raise SystemExit("ground plane height is not finite")
+if delta is not None and not math.isfinite(float(delta)): raise SystemExit("ground plane delta is not finite")
 mode = "healthy_ground_plane"
 if healthy:
     if delta is not None:
@@ -200,9 +249,9 @@ else:
     mode = "fixed_height_verified" if state == "fixed_height_verified" else "fixed_height_unverified"
 if forced:
     xy = data.get("target_xy_mm", data.get("base_xy_mm"))
-    sdk = data.get("right_arm_sdk_target_m")
-    force_ok = xy in ([400, 10], [400.0, 10.0]) or (isinstance(sdk, list) and len(sdk) >= 2 and abs(float(sdk[0])-.4)<1e-6 and abs(float(sdk[1])-.01)<1e-6)
+    force_ok = xy in ([400, 10], [400.0, 10.0]) or (abs(sdk[0]-.4)<1e-6 and abs(sdk[1]-.01)<1e-6)
     if not force_ok: raise SystemExit("forced target is not [400,10]mm")
+    mode = "fixed_xy_degraded"
 admission = {"accepted": True, "fixed_table_height_mm": fixed, "ground_plane_status": state,
              "ground_plane_height_mm": height, "mode": mode,
              "force_fixed_target": os.environ["FORCE_FIXED"] == "1"}
@@ -212,11 +261,27 @@ PY
 
 validate_grasp() {
   GRASP_FILE="$GRASP_JSON" "$PYTHON_BIN" - <<'PY'
-import json, os, pathlib
+import json, math, os, pathlib
 data = json.loads(pathlib.Path(os.environ["GRASP_FILE"]).read_text(encoding="utf-8"))
-verified = data.get("grasp_verified") is True or data.get("success") is True
-navigation_permitted = data.get("navigation_permitted", verified) is True
-if not verified or not navigation_permitted: raise SystemExit("grasp success/navigation_permitted gate failed")
+evidence = data.get("feedback_evidence")
+if data.get("schema") != "competition_grasp_verification/v1": raise SystemExit("grasp verification schema mismatch")
+if data.get("success") is not True or data.get("navigation_permitted") is not True: raise SystemExit("grasp success/navigation_permitted gate failed")
+if data.get("single_attempt_latched") is not True or data.get("condition_b_roi_clear_3_and_feedback_delta_5") is not True:
+    raise SystemExit("grasp single-attempt sensor condition was not proven")
+if not isinstance(evidence, dict) or evidence.get("schema") != "competition_grasp_feedback/v1": raise SystemExit("grasp feedback evidence missing")
+if evidence.get("live") is not True or evidence.get("source") != "live_ros2_and_mercury_feedback": raise SystemExit("grasp feedback is not live")
+delta = float(evidence.get("gripper_feedback_delta", float("-inf")))
+if evidence.get("roi_pen_last3") != [False, False, False] or not math.isfinite(delta) or delta < 5.0:
+    raise SystemExit("grasp feedback does not prove ROI clear and gripper delta")
+PY
+}
+
+validate_place() {
+  PLACE_FILE="$PLACE_JSON" "$PYTHON_BIN" - <<'PY'
+import json, os, pathlib
+data = json.loads(pathlib.Path(os.environ["PLACE_FILE"]).read_text(encoding="utf-8"))
+if data.get("schema") != "competition_place_execution/v1" or data.get("success") is not True:
+    raise SystemExit("place completion result is not successful")
 PY
 }
 
@@ -226,6 +291,7 @@ case "${COMPETITION_VALIDATE_ONLY:-}" in
   engine) validate_engine_manifest; exit $? ;;
   target) validate_target_and_write_admission; exit $? ;;
   grasp) validate_grasp; exit $? ;;
+  place) validate_place; exit $? ;;
   "") ;;
   *) die "unknown COMPETITION_VALIDATE_ONLY mode" ;;
 esac
@@ -233,10 +299,11 @@ esac
 bool01 ALLOW_BBOX_CENTER "$ALLOW_BBOX_CENTER"
 bool01 ALLOW_FIXED_XY_FALLBACK "$ALLOW_FIXED_XY_FALLBACK"
 bool01 FORCE_FIXED_TARGET "$FORCE_FIXED_TARGET"
+[[ "$ALLOW_FIXED_XY_FALLBACK" == "$FORCE_FIXED_TARGET" ]] || die "fixed XY fallback and FORCE_FIXED_TARGET must be enabled together"
 [[ "$FIXED_TABLE_HEIGHT_MM" == "650" ]] || die "FIXED_TABLE_HEIGHT_MM is competition-locked to 650"
-need_file "$CALIB_PATH"; need_file "$DETECTOR_CONFIG"; need_file "$SITE_METADATA_PATH"
+need_file "$CALIB_PATH"; need_file "$PROJECTOR_PATH"; need_file "$DETECTOR_CONFIG"; need_file "$SITE_METADATA_PATH"
 need_file "$DEYES_INSTALL/setup.bash"; need_file "$PICK_SCRIPT"; need_file "$PLACE_SCRIPT"
-need_file "$TARGET_ADAPTER"
+need_file "$TARGET_ADAPTER"; need_file "$GRASP_FEEDBACK_ADAPTER"
 "$DEYES_ASSETS/probe_opencv_cuda.sh" "$OPENCV_PREFIX" >"$LOG_DIR/cuda_probe.log" 2>&1 || die "CUDA OpenCV probe failed"
 validate_engine_manifest || die "engine sidecar validation failed"
 trace "transaction" "started" "log_dir=$LOG_DIR"
@@ -272,12 +339,13 @@ bbox_bool=false; fixed_xy_bool=false; force_bool=false
 [[ "$ALLOW_BBOX_CENTER" == 1 ]] && bbox_bool=true
 [[ "$ALLOW_FIXED_XY_FALLBACK" == 1 ]] && fixed_xy_bool=true
 [[ "$FORCE_FIXED_TARGET" == 1 ]] && force_bool=true
+export FORCE_FIXED_TARGET
 trace "competition_target" "started" "topic=$TARGET_TOPIC"
 "$PYTHON_BIN" "$TARGET_ADAPTER" --topic "$TARGET_TOPIC" --output "$TARGET_JSON" --timeout "$TARGET_TIMEOUT_SEC" \
   >"$LOG_DIR/competition_target.log" 2>&1 & TARGET_SNAPSHOT_PID=$!
 sleep "${TARGET_SUBSCRIBER_READY_SEC:-0.5}"
 ros2 run "$TARGET_PACKAGE" "$TARGET_EXECUTABLE" --ros-args \
-  -p venue_profile_path:="$SITE_METADATA_PATH" -p fixed_table_height_m:="0.650" \
+  -p venue_profile_path:="$SITE_METADATA_PATH" -p projector_path:="$PROJECTOR_PATH" -p fixed_table_height_m:="0.650" \
   -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
   -p force_fixed_target:="$force_bool" >"$LOG_DIR/competition_target_node.log" 2>&1 & TARGET_PID=$!
 sleep "${TARGET_STARTUP_SEC:-2}"
@@ -292,6 +360,10 @@ fi
 need_file "$TARGET_JSON"
 validate_target_and_write_admission || die "target/ground-plane admission failed"
 trace "admission" "ok" "$(tr -d '\n' < "$ADMISSION_JSON")"
+if [[ "$FORCE_FIXED_TARGET" == 1 ]]; then
+  trace "degraded" "active" "operator asserted pen is manually placed at marker_xy_mm=[400,10]; random XY disabled"
+fi
+stop_target
 
 mapfile -t pick_xy < <(TARGET_FILE="$TARGET_JSON" "$PYTHON_BIN" - <<'PY'
 import json,os,pathlib
@@ -305,15 +377,19 @@ else:
 PY
 )
 [[ "${#pick_xy[@]}" == 2 ]] || die "target XY extraction failed"
-run_step pick "$PYTHON_BIN" "$PICK_SCRIPT" --x-mm "${pick_xy[0]}" --y-mm "${pick_xy[1]}" --venue-profile "$SITE_METADATA_PATH" --result-json "$GRASP_JSON" || die "pick command/serial/feedback failed"
+run_step pick "$PYTHON_BIN" "$PICK_SCRIPT" --x-mm "${pick_xy[0]}" --y-mm "${pick_xy[1]}" \
+  --venue-profile "$SITE_METADATA_PATH" --target-json "$TARGET_JSON" \
+  --feedback-adapter "$GRASP_FEEDBACK_ADAPTER" --feedback-json "$GRASP_FEEDBACK_JSON" \
+  --result-json "$GRASP_JSON" || die "pick command/serial/feedback failed"
 need_file "$GRASP_JSON"
 validate_grasp || die "grasp verification failed"
 trace "grasp_verification" "ok" "success=true navigation_permitted=true"
-stop_target
 stop_vision
 
 source_ros1
 run_step nav_goal4 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL4" || die "navigation goal4 failed"
-run_step place "$PYTHON_BIN" "$PLACE_SCRIPT" --venue-profile "$SITE_METADATA_PATH" || die "place command/serial/feedback failed"
+run_step place "$PYTHON_BIN" "$PLACE_SCRIPT" --venue-profile "$SITE_METADATA_PATH" --result-json "$PLACE_JSON" || die "place command/serial/feedback failed"
+need_file "$PLACE_JSON"
+validate_place || die "place completion validation failed"
 trace "transaction" "complete" ""
 printf '[race] COMPLETE transaction=%s logs=%s\n' "$TRANSACTION_ID" "$LOG_DIR"

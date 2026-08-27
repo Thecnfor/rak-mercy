@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""650 mm venue pick. One attempt only; transport is fail-closed."""
+"""650 mm venue pick. One attempt only; transport and verification fail closed."""
 from __future__ import annotations
-import argparse, json, os, time
+import argparse, json, math, os, subprocess, sys, time
 from pathlib import Path
 from deyes_stereo.competition_grasp_verification import GraspVerifier
 from deyes_stereo.competition_pick_execution import Mercury650Executor, MotionProfile
 
 DEFAULT_PROFILE=Path(os.environ.get("DEGRADED_VENUE_PROFILE","/home/elephant/deyes_competition_assets/competition_venue_65cm.yaml"))
+DEFAULT_FEEDBACK_ADAPTER=Path(os.environ.get("COMPETITION_GRASP_FEEDBACK_ADAPTER","/home/elephant/scripts/competition_grasp_feedback_adapter.py"))
 
 def _motion_profile(path: Path) -> MotionProfile:
     try:
@@ -19,34 +20,84 @@ def _motion_profile(path: Path) -> MotionProfile:
     return MotionProfile(transport_validated=validated)
 
 
+def _stable_gripper_feedback(arm, *, samples: int = 3, interval_sec: float = .1,
+                             max_spread: float = 2.0) -> float:
+    getter=getattr(arm,"get_gripper_value",None)
+    if not callable(getter): raise RuntimeError("gripper_feedback_unavailable")
+    values=[]
+    for _ in range(samples):
+        value=getter()
+        try: number=float(value)
+        except (TypeError,ValueError) as exc: raise RuntimeError(f"gripper_feedback_invalid:{value}") from exc
+        if not math.isfinite(number): raise RuntimeError(f"gripper_feedback_invalid:{value}")
+        values.append(number); time.sleep(interval_sec)
+    if max(values)-min(values)>max_spread: raise RuntimeError(f"gripper_feedback_unstable:{values}")
+    return sum(values)/len(values)
+
+
+def _capture_feedback(adapter: Path, target_json: Path, output: Path, *, empty_closed: float,
+                      gripper: float, timeout_sec: float) -> dict:
+    command=[sys.executable,str(adapter),"--target-json",str(target_json),"--output",str(output),
+             "--timeout",str(timeout_sec),"--empty-closed-feedback",str(empty_closed),
+             "--gripper-feedback",str(gripper)]
+    try:
+        completed=subprocess.run(command,text=True,capture_output=True,check=False,timeout=timeout_sec+3.)
+    except subprocess.TimeoutExpired as exc: raise RuntimeError("grasp_feedback_adapter_timeout") from exc
+    if completed.returncode:
+        detail=(completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"grasp_feedback_adapter_failed:{detail}")
+    try: data=json.loads(output.read_text(encoding="utf-8"))
+    except (OSError,json.JSONDecodeError) as exc: raise RuntimeError("grasp_feedback_adapter_output_invalid") from exc
+    if data.get("schema")!="competition_grasp_feedback/v1" or data.get("live") is not True:
+        raise RuntimeError("grasp_feedback_adapter_did_not_return_live_evidence")
+    if abs(float(data.get("empty_closed_feedback"))-empty_closed)>1e-6 or abs(float(data.get("gripper_feedback"))-gripper)>1e-6:
+        raise RuntimeError("grasp_feedback_adapter_hardware_values_mismatch")
+    roi=data.get("roi_pen_last3")
+    if roi != [False,False,False]: raise RuntimeError("grasp_feedback_original_roi_not_clear_three_frames")
+    return data
+
+
 def main() -> int:
     parser=argparse.ArgumentParser()
     parser.add_argument("--x-mm",type=float,default=float(os.environ.get("DEGRADED_PICK_X","400")))
     parser.add_argument("--y-mm",type=float,default=float(os.environ.get("DEGRADED_PICK_Y","10")))
     parser.add_argument("--venue-profile",type=Path,default=DEFAULT_PROFILE)
     parser.add_argument("--dry-run",action="store_true")
-    parser.add_argument("--result-json",type=Path); parser.add_argument("--empty-closed-feedback",type=float)
-    parser.add_argument("--gripper-feedback",type=float); parser.add_argument("--pen-height-over-table-m",type=float)
-    parser.add_argument("--roi-pen-last3",default="true,true,true"); args=parser.parse_args()
+    parser.add_argument("--result-json",type=Path)
+    parser.add_argument("--target-json",type=Path)
+    parser.add_argument("--feedback-adapter",type=Path,default=DEFAULT_FEEDBACK_ADAPTER)
+    parser.add_argument("--feedback-json",type=Path)
+    parser.add_argument("--feedback-timeout-sec",type=float,default=8.0)
+    args=parser.parse_args()
     profile=_motion_profile(args.venue_profile)
     plan={"schema":"competition_pick_execution/v1","target_xy_mm":[args.x_mm,args.y_mm],
           "z_sequence_mm":[235,180,140,135,180,235],"orientation_deg":[179.99,-12,0],
           "transport_pose_mm_deg":[300,10,260,179.99,-12,0],"transport_validated":profile.transport_validated}
     if args.dry_run: print(json.dumps(plan)); return 0
-    from pymycobot import Mercury
-    arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
-    if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
-    arm.set_gripper_mode(0)
     try:
+        if args.result_json is None or args.target_json is None or args.feedback_json is None:
+            raise RuntimeError("live_pick_requires_result_target_and_feedback_json_paths")
+        if not args.feedback_adapter.is_file(): raise RuntimeError(f"grasp_feedback_adapter_missing:{args.feedback_adapter}")
+        from pymycobot import Mercury
+        arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
+        if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
+        arm.set_gripper_mode(0)
+        arm.set_gripper_value(profile.gripper_closed,20); time.sleep(.5)
+        empty_closed=_stable_gripper_feedback(arm)
         trace=Mercury650Executor(arm,profile).pick(args.x_mm,args.y_mm)
-        if args.empty_closed_feedback is None or args.gripper_feedback is None:
-            result={"success":False,"navigation_permitted":False,"reason":"grasp_verification_inputs_missing","trace":trace}
-        else:
-            roi=[v.strip().lower()=="true" for v in args.roi_pen_last3.split(",")]
-            result=GraspVerifier(args.empty_closed_feedback).verify(pen_height_over_table_m=args.pen_height_over_table_m,
-                original_roi_has_pen=roi,gripper_feedback=args.gripper_feedback); result["trace"]=trace
-    except RuntimeError as exc: result={"success":False,"navigation_permitted":False,"reason":str(exc)}
-    if args.result_json: args.result_json.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")
+        gripper_feedback=_stable_gripper_feedback(arm)
+        evidence=_capture_feedback(args.feedback_adapter,args.target_json,args.feedback_json,
+                                   empty_closed=empty_closed,gripper=gripper_feedback,
+                                   timeout_sec=args.feedback_timeout_sec)
+        result=GraspVerifier(empty_closed).verify(pen_height_over_table_m=None,
+            original_roi_has_pen=evidence["roi_pen_last3"],gripper_feedback=gripper_feedback)
+        result["trace"]=trace; result["feedback_evidence"]=evidence
+    except (RuntimeError,OSError,TypeError,ValueError) as exc:
+        result={"schema":"competition_grasp_verification/v1","success":False,
+                "navigation_permitted":False,"reason":str(exc)}
+    if args.result_json:
+        args.result_json.parent.mkdir(parents=True,exist_ok=True)
+        args.result_json.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(result)); return 0 if result.get("success") else 2
 
 

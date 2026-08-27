@@ -20,15 +20,20 @@ def _motion_profile(path: Path) -> MotionProfile:
 def main() -> int:
     parser=argparse.ArgumentParser(); parser.add_argument("--x-mm",type=float,default=400.0); parser.add_argument("--y-mm",type=float,default=10.0)
     parser.add_argument("--venue-profile",type=Path,default=DEFAULT_PROFILE)
-    parser.add_argument("--dry-run",action="store_true"); args=parser.parse_args()
+    parser.add_argument("--dry-run",action="store_true"); parser.add_argument("--result-json",type=Path); args=parser.parse_args()
     profile=_motion_profile(args.venue_profile)
     plan={"schema":"competition_place_execution/v1","target_xy_mm":[args.x_mm,args.y_mm],"z_sequence_mm":[200,165,200,260],"transport_validated":profile.transport_validated}
     if args.dry_run: print(json.dumps(plan)); return 0
-    from pymycobot import Mercury
-    arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
-    if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
-    try: result={"success":True,"trace":Mercury650Executor(arm,profile).place(args.x_mm,args.y_mm)}
-    except RuntimeError as exc: result={"success":False,"reason":str(exc)}
+    try:
+        from pymycobot import Mercury
+        arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
+        if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
+        result={"schema":"competition_place_execution/v1","success":True,"trace":Mercury650Executor(arm,profile).place(args.x_mm,args.y_mm)}
+    except (ImportError,RuntimeError,OSError,TypeError,ValueError) as exc:
+        result={"schema":"competition_place_execution/v1","success":False,"reason":str(exc)}
+    if args.result_json:
+        args.result_json.parent.mkdir(parents=True,exist_ok=True)
+        args.result_json.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")
     print(json.dumps(result)); return 0 if result["success"] else 2
 
 

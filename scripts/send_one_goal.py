@@ -7,7 +7,7 @@ Why this exists:
     when nav actually succeeded. The adapter also has a completion latch
     that blocks subsequent missions.
   - For the race-day flow we want each goal to be sent DIRECTLY to
-    move_base via SimpleActionClient, with a single retry, blocking
+    move_base via SimpleActionClient, exactly once, blocking
     until SUCCEEDED.
 
 Usage:
