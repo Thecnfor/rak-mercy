@@ -72,6 +72,10 @@ def _build_active_links_mask(urdf_path: str, side: str) -> list[bool]:
     if sum(mask) != 6:
         # Fallback: activate the first six arm-named links. Better than
         # crashing the field if the URDF is updated upstream.
+        # Rebuild rather than append: ikpy requires one mask entry per
+        # chain link.  Appending here previously doubled a 9-link mask to
+        # length 18 and Chain.from_urdf_file rejected it before solving.
+        mask = []
         active_so_far = 0
         for link in chain.links:
             if active_so_far < 6 and link.name not in {"base_link", "base_footprint", "link_body"}:
