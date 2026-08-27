@@ -29,8 +29,10 @@ motion:
 gripper: {open: 70, closed: 0}
 transport:
   pose_mm_deg: [300.0, 10.0, 260.0, 179.99, -12.0, 0.0]
-  transport_validated: true
-  validation_reason: official_urdf_6axis_ik_fk_residual_pass
+  # IK/FK and limits pass independently, but they do not prove collision clearance.
+  kinematics_validated: true
+  transport_validated: false
+  validation_reason: collision_clearance_requires_field_validation
   official_urdf_path: "mercury_robot_urdf/urdf/mercury_x1/mercury_x1.urdf"
   ik_frame: link_body
   ik_tcp_link: link6_R
@@ -44,7 +46,7 @@ transport:
   tcp_vertical_clearance_nominal_mm: 5.0
   tcp_vertical_clearance_conservative_mm: 0.0
   collision_clearance_validated: false
-  live_behavior_when_unvalidated: fail_closed
+  live_behavior_when_unvalidated: fail_closed_before_hardware_init
 grasp_verification:
   lifted_height_over_table_m: 0.030
   roi_clear_consecutive_frames: 3

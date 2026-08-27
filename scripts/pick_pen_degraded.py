@@ -13,11 +13,20 @@ def _motion_profile(path: Path) -> MotionProfile:
     try:
         import yaml
         transport=yaml.safe_load(path.read_text(encoding="utf-8"))["transport"]
-        validated=(transport.get("transport_validated") is True and transport.get("joint_limits_passed") is True
-                   and float(transport.get("fk_position_residual_mm",float("inf")))<=5.0
-                   and float(transport.get("fk_orientation_residual_deg",float("inf")))<=2.0)
-    except (OSError,KeyError,TypeError,ValueError,AttributeError): validated=False
-    return MotionProfile(transport_validated=validated)
+        kinematics=(transport.get("kinematics_validated") is True
+                    and transport.get("joint_limits_passed") is True
+                    and float(transport.get("fk_position_residual_mm",float("inf")))<=5.0
+                    and float(transport.get("fk_orientation_residual_deg",float("inf")))<=2.0)
+        collision=transport.get("collision_clearance_validated") is True
+        clearance=float(transport.get("tcp_vertical_clearance_conservative_mm",0.0))
+        validated=(transport.get("transport_validated") is True and kinematics
+                   and collision and clearance>0.0)
+    except (OSError,KeyError,TypeError,ValueError,AttributeError):
+        validated=False; kinematics=False; collision=False; clearance=0.0
+    return MotionProfile(transport_validated=validated,
+        kinematics_validated=kinematics,
+        collision_clearance_validated=collision,
+        conservative_clearance_mm=clearance)
 
 
 def _stable_gripper_feedback(arm, *, samples: int = 3, interval_sec: float = .1,
@@ -54,6 +63,8 @@ def _capture_feedback(adapter: Path, target_json: Path, output: Path, *, empty_c
         raise RuntimeError("grasp_feedback_adapter_hardware_values_mismatch")
     roi=data.get("roi_pen_last3")
     if roi != [False,False,False]: raise RuntimeError("grasp_feedback_original_roi_not_clear_three_frames")
+    if data.get("detector_frames_last3_ambiguous") != [False,False,False]:
+        raise RuntimeError("grasp_feedback_detector_frames_not_explicitly_nonambiguous")
     return data
 
 
@@ -72,12 +83,18 @@ def main() -> int:
     profile=_motion_profile(args.venue_profile)
     plan={"schema":"competition_pick_execution/v1","target_xy_mm":[args.x_mm,args.y_mm],
           "z_sequence_mm":[235,180,140,135,180,235],"orientation_deg":[179.99,-12,0],
-          "transport_pose_mm_deg":[300,10,260,179.99,-12,0],"transport_validated":profile.transport_validated}
+          "transport_pose_mm_deg":[300,10,260,179.99,-12,0],
+          "transport_validated":profile.transport_validated,
+          "kinematics_validated":profile.kinematics_validated,
+          "collision_clearance_validated":profile.collision_clearance_validated,
+          "conservative_clearance_mm":profile.conservative_clearance_mm,
+          "commands_emitted":False}
     if args.dry_run: print(json.dumps(plan)); return 0
     try:
         if args.result_json is None or args.target_json is None or args.feedback_json is None:
             raise RuntimeError("live_pick_requires_result_target_and_feedback_json_paths")
         if not args.feedback_adapter.is_file(): raise RuntimeError(f"grasp_feedback_adapter_missing:{args.feedback_adapter}")
+        profile.require_hardware_admission()
         from pymycobot import Mercury
         arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
         if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)

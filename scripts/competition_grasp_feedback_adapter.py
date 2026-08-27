@@ -42,37 +42,62 @@ def _bbox_intersects_roi(bbox: object, roi: list[float]) -> bool:
     return x2 >= roi[0] and x1 <= roi[2] and y2 >= roi[1] and y1 <= roi[3]
 
 
-def _frame_has_pen_in_roi(payload: object, roi: list[float]) -> tuple[bool, int]:
+def _frame_has_pen_in_roi(payload: object, roi: list[float]) -> tuple[bool, int, bool]:
     if not isinstance(payload, dict):
         raise ValueError("detector payload must be an object")
     if payload.get("model_id") != MODEL_ID:
         raise ValueError("detector model_id mismatch")
+    if payload.get("complete") is not True:
+        raise ValueError("detector payload complete must be true")
     detections = payload.get("detections")
     if not isinstance(detections, list):
         raise ValueError("detector payload detections must be a list")
     if any(not isinstance(item, dict) for item in detections):
         raise ValueError("detector detection item must be an object")
+    ambiguous = payload.get("ambiguous")
+    if not isinstance(ambiguous, bool):
+        raise ValueError("detector payload ambiguous must be explicit boolean")
+    rejection_reason = payload.get("rejection_reason")
+    if not isinstance(rejection_reason, str):
+        raise ValueError("detector payload rejection_reason must be an explicit string")
+    if ambiguous:
+        raise ValueError(f"detector payload ambiguous:{rejection_reason or 'reason_missing'}")
+    if rejection_reason:
+        raise ValueError(f"detector payload rejection_reason:{rejection_reason}")
+    for field in ("detection_count", "observed_detection_count"):
+        declared = payload.get(field)
+        if type(declared) is not int or declared < 0 or declared != len(detections):
+            raise ValueError(f"detector payload {field} inconsistent with detections")
+    auto_grasp_permitted = payload.get("auto_grasp_permitted")
+    if not isinstance(auto_grasp_permitted, bool):
+        raise ValueError("detector payload auto_grasp_permitted must be explicit boolean")
+    if auto_grasp_permitted is not bool(detections):
+        raise ValueError("detector payload auto_grasp_permitted inconsistent with detections")
     stamp_ns = int(payload.get("stamp_sec", 0)) * 1_000_000_000 + int(payload.get("stamp_nanosec", 0))
     if stamp_ns <= 0:
         raise ValueError("detector payload stamp missing")
-    return any(_bbox_intersects_roi(item.get("bbox_xyxy"), roi) for item in detections), stamp_ns
+    intersections = [_bbox_intersects_roi(item.get("bbox_xyxy"), roi) for item in detections]
+    return any(intersections), stamp_ns, ambiguous
 
 
-def _collect_clear_frames(payloads: Iterable[object], roi: list[float], required: int) -> tuple[list[bool], list[int]]:
+def _collect_clear_frames(
+    payloads: Iterable[object], roi: list[float], required: int
+) -> tuple[list[bool], list[int], list[bool]]:
     clear: list[bool] = []
     stamps: list[int] = []
+    ambiguous_states: list[bool] = []
     last_stamp = 0
     for payload in payloads:
-        has_pen, stamp_ns = _frame_has_pen_in_roi(payload, roi)
+        has_pen, stamp_ns, ambiguous = _frame_has_pen_in_roi(payload, roi)
         if stamp_ns <= last_stamp:
             raise ValueError("detector payload stamps are not strictly increasing")
         last_stamp = stamp_ns
         if has_pen:
-            clear.clear(); stamps.clear()
+            clear.clear(); stamps.clear(); ambiguous_states.clear()
         else:
-            clear.append(False); stamps.append(stamp_ns)
+            clear.append(False); stamps.append(stamp_ns); ambiguous_states.append(ambiguous)
             if len(clear) == required:
-                return clear, stamps
+                return clear, stamps, ambiguous_states
     raise ValueError(f"did not observe {required} consecutive clear original-ROI frames")
 
 
@@ -100,7 +125,7 @@ def _live_payloads(topic: str, timeout: float, roi: list[float], required: int) 
         nonlocal consecutive_clear, last_stamp, error
         try:
             payload = json.loads(message.data)
-            has_pen, stamp_ns = _frame_has_pen_in_roi(payload, roi)
+            has_pen, stamp_ns, _ = _frame_has_pen_in_roi(payload, roi)
             if stamp_ns <= last_stamp:
                 raise ValueError("detector payload stamps are not strictly increasing")
             last_stamp = stamp_ns
@@ -140,7 +165,9 @@ def main() -> int:
         pixel, roi = _load_target(args.target_json, args.roi_half_size_px)
         payloads = (_fixture_payloads(args.detections_fixture) if args.detections_fixture
                     else _live_payloads(args.topic, args.timeout, roi, args.required_clear_frames))
-        clear, stamps = _collect_clear_frames(payloads, roi, args.required_clear_frames)
+        clear, stamps, ambiguous_states = _collect_clear_frames(
+            payloads, roi, args.required_clear_frames
+        )
         result = {
             "schema": "competition_grasp_feedback/v1",
             "source": "fixture_replay" if args.detections_fixture else "live_ros2_and_mercury_feedback",
@@ -149,6 +176,7 @@ def main() -> int:
             "original_roi_xyxy": roi,
             "roi_pen_last3": clear,
             "detector_stamp_ns_last3": stamps,
+            "detector_frames_last3_ambiguous": ambiguous_states,
             "empty_closed_feedback": args.empty_closed_feedback,
             "gripper_feedback": args.gripper_feedback,
             "gripper_feedback_delta": args.gripper_feedback - args.empty_closed_feedback,

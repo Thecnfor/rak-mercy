@@ -3,7 +3,7 @@ import pytest
 from deyes_stereo.competition_pick_target_contract import TargetPolicy, build_competition_pick_target
 
 STAMP=8_000_000_123
-DETECTION={"stamp_ns":STAMP,"complete":True,"detections":[{"target_id":"p","bbox_xyxy":[20,20,60,60]}]}
+DETECTION={"stamp_ns":STAMP,"complete":True,"auto_grasp_permitted":True,"detections":[{"target_id":"p","bbox_xyxy":[20,20,60,60]}]}
 FEATURES={"stamp_ns":STAMP,"features":[{"target_id":"p","axis_complete":True,"axis_endpoints_px":[[30,40],[50,40]]}]}
 INFO={"stamp_ns":STAMP,"depth_stamp_ns":STAMP}
 HULL=[[.2,-.2],[.6,-.2],[.6,.2],[.2,.2]]

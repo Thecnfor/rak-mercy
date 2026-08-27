@@ -107,6 +107,12 @@ def run_topic(args: argparse.Namespace) -> int:
     try:
         import rclpy
         from rclpy.node import Node
+        from rclpy.qos import (
+            DurabilityPolicy,
+            HistoryPolicy,
+            QoSProfile,
+            ReliabilityPolicy,
+        )
         from std_msgs.msg import String
     except ImportError as exc:
         print(f"ROS 2 Python unavailable: {exc}", file=sys.stderr)
@@ -133,7 +139,13 @@ def run_topic(args: argparse.Namespace) -> int:
         else:
             error = validation_error
 
-    node.create_subscription(String, args.topic, receive, 10)
+    target_qos = QoSProfile(
+        history=HistoryPolicy.KEEP_LAST,
+        depth=1,
+        reliability=ReliabilityPolicy.RELIABLE,
+        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+    )
+    node.create_subscription(String, args.topic, receive, target_qos)
     deadline = node.get_clock().now().nanoseconds + int(args.timeout * 1e9)
     try:
         while (

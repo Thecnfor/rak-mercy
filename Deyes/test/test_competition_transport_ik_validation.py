@@ -72,3 +72,6 @@ def test_tcp_evidence_is_explicitly_vertical_only_and_not_collision_clearance() 
     assert transport["tcp_vertical_clearance_nominal_mm"] == 5.0
     assert transport["tcp_vertical_clearance_conservative_mm"] == 0.0
     assert transport["collision_clearance_validated"] is False
+    assert transport["kinematics_validated"] is True
+    assert transport["transport_validated"] is False
+    assert transport["live_behavior_when_unvalidated"] == "fail_closed_before_hardware_init"

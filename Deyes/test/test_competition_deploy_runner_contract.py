@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import importlib.util
 import json
 import os
-import argparse
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,9 +23,17 @@ RUNNER = ROOT / "scripts" / "race_onekey_try.sh"
 DEPLOY = ROOT / "tools" / "deploy_competition_onekey.py"
 PS1 = ROOT / "tools" / "deploy_competition_onekey.ps1"
 GRASP_ADAPTER = ROOT / "scripts" / "competition_grasp_feedback_adapter.py"
+PICK = ROOT / "scripts" / "pick_pen_degraded.py"
 PLACE = ROOT / "scripts" / "place_pen_degraded.py"
 SEND_GOAL = ROOT / "scripts" / "send_one_goal.py"
 EXPECTED_ONNX = "8916cbf25949d6e8b03c01e6ca1c7871aeac0ad105c931f1dd9881cb5d5a4c4e"
+
+
+def _engine_bindings() -> list[dict[str, object]]:
+    return [
+        {"index": 0, "name": "images", "io": "input", "shape": [1, 3, 416, 416], "dtype": "float32"},
+        {"index": 1, "name": "output0", "io": "output", "shape": [1, 10647, 6], "dtype": "float16"},
+    ]
 
 
 def _load_deploy():
@@ -71,12 +82,21 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
                       "venue_20260827_touch_projector.yaml"):
             self.assertIn(token, content)
         self.assertIn("pkill -INT -f '[i]mx219_stereo_capture_node", content)
-        self.assertIn("^(/usr/lib/|/lib/)", content)
+        self.assertIn("os.path.commonpath((prefix,resolved)) != prefix", content)
+        self.assertIn("CUDA node leaked outside isolated OpenCV", content)
         self.assertNotIn("grep -E '(/usr/lib|/lib/)'", content)
         self.assertIn("m['tensorrt_version']==os.environ['TRT_VERSION']", content)
         self.assertIn("m['cuda_version']==os.environ['CUDA_VERSION']", content)
         self.assertIn("unable to determine CUDA version", content)
         self.assertIn("unsupported deployment architecture", content)
+        for topic in ("/x1/stereo/left/camera_info_rect", "/x1/detection/boxes",
+                      "/x1/detection/boxes_status", "/x1/ground/plane",
+                      "/x1/ground/plane_status", "/x1/detection/pen_features",
+                      "/x1/detection/pen_features_status"):
+            self.assertIn(topic, content)
+        for token in ("bindings", "num_io_tensors", "get_tensor_name", "num_bindings",
+                      "get_binding_name", "runtime_bindings.json", "vision_contract.json"):
+            self.assertIn(token, content)
         bash = _bash()
         if bash:
             deploy = _load_deploy()
@@ -85,6 +105,38 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
                 deploy.PurePosixPath("/home/elephant/deyes_competition_deploy"))
             checked = subprocess.run([bash, "-n"], input=command, text=True, capture_output=True, check=False)
             self.assertEqual(checked.returncode, 0, checked.stderr)
+            heredocs = re.findall(r"<<'PY'[^\n]*\n(.*?)\nPY(?:\n|$)", command, re.DOTALL)
+            self.assertGreaterEqual(len(heredocs), 6)
+            for index, source in enumerate(heredocs):
+                compile(source, f"deploy-heredoc-{index}.py", "exec")
+            self.assertIn("vision contract topics missing", command)
+
+    def test_opencv_private_prefix_gate_accepts_private_and_rejects_system_paths(self) -> None:
+        deploy = _load_deploy()
+        prefix = "/home/elephant/opencv-4.8.0-cuda"
+        accepted = deploy.validate_opencv_ldd_paths([
+            prefix + "/lib/libopencv_core.so.4.8",
+            prefix + "/lib/libopencv_cudastereo.so.4.8",
+        ], prefix)
+        self.assertEqual(len(accepted), 2)
+        with self.assertRaisesRegex(ValueError, "outside isolated OpenCV prefix"):
+            deploy.validate_opencv_ldd_paths([
+                prefix + "/lib/libopencv_core.so.4.8",
+                "/usr/lib/aarch64-linux-gnu/libopencv_imgproc.so.4.5",
+            ], prefix)
+        with self.assertRaisesRegex(ValueError, "no OpenCV libraries"):
+            deploy.validate_opencv_ldd_paths([], prefix)
+
+        command = deploy.remote_deploy_command(
+            argparse.Namespace(
+                stop_existing=False,
+                vision_dry_run_seconds=1,
+                remote_home="/home/elephant",
+            ),
+            deploy.PurePosixPath("/home/elephant/deyes_competition_deploy"),
+        )
+        self.assertIn("awk '/libopencv_/", command)
+        self.assertNotIn("awk '/libopencv_(core|cuda)/", command)
 
     def test_runner_order_permissions_and_powershell_flags_are_fail_closed(self) -> None:
         content = RUNNER.read_text(encoding="utf-8")
@@ -107,6 +159,9 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
         self.assertIn("trap cleanup EXIT", content); self.assertIn("trap 'on_signal INT 130' INT", content)
         self.assertIn('data.get("success") is not True', content)
         self.assertIn('data.get("navigation_permitted") is not True', content)
+        self.assertIn("resolve_deyes_python_site", content)
+        self.assertIn("import pathlib, deyes_stereo", content)
+        self.assertIn('export PYTHONPATH="$deyes_site${PYTHONPATH:+:$PYTHONPATH}"', content)
         adapter = (ROOT / "tools" / "competition_target_snapshot_adapter.py").read_text(encoding="utf-8")
         self.assertIn("waiting_for_exact_stamp_projector_adapter", adapter)
         self.assertIn("competition_pick_target/v1", adapter)
@@ -115,6 +170,71 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
         self.assertIn("--result-json", PLACE.read_text(encoding="utf-8"))
         self.assertNotIn("retry", SEND_GOAL.read_text(encoding="utf-8").lower())
         self.assertIn("qos_profile_sensor_data", GRASP_ADAPTER.read_text(encoding="utf-8"))
+        for script in (PICK, PLACE):
+            motion_source = script.read_text(encoding="utf-8")
+            self.assertLess(
+                motion_source.index("profile.require_hardware_admission()"),
+                motion_source.index("from pymycobot import Mercury"),
+            )
+
+    def test_default_venue_profile_blocks_live_pick_place_but_keeps_dry_run_plans(self) -> None:
+        profile = ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml"
+        env = os.environ.copy()
+        package_path = str(ROOT / "Deyes/src/deyes_stereo")
+        env["PYTHONPATH"] = package_path + os.pathsep + env.get("PYTHONPATH", "")
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            for script in (PICK, PLACE):
+                dry = subprocess.run(
+                    [sys.executable, str(script), "--venue-profile", str(profile), "--dry-run"],
+                    env=env, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(dry.returncode, 0, dry.stderr)
+                plan = json.loads(dry.stdout)
+                self.assertIs(plan["commands_emitted"], False)
+                self.assertIs(plan["kinematics_validated"], True)
+                self.assertIs(plan["collision_clearance_validated"], False)
+                self.assertIs(plan["transport_validated"], False)
+
+            target = tmp_path / "target.json"
+            target.write_text("{}", encoding="utf-8")
+            pick_result = tmp_path / "pick.json"
+            blocked_pick = subprocess.run(
+                [sys.executable, str(PICK), "--venue-profile", str(profile),
+                 "--result-json", str(pick_result), "--target-json", str(target),
+                 "--feedback-json", str(tmp_path / "feedback.json"),
+                 "--feedback-adapter", str(GRASP_ADAPTER)],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(blocked_pick.returncode, 2)
+            self.assertIn("transport_motion_not_fully_validated", pick_result.read_text(encoding="utf-8"))
+
+            place_result = tmp_path / "place.json"
+            blocked_place = subprocess.run(
+                [sys.executable, str(PLACE), "--venue-profile", str(profile),
+                 "--result-json", str(place_result)],
+                env=env, text=True, capture_output=True, check=False,
+            )
+            self.assertEqual(blocked_place.returncode, 2)
+            self.assertIn("transport_motion_not_fully_validated", place_result.read_text(encoding="utf-8"))
+
+            site = yaml.safe_load(profile.read_text(encoding="utf-8"))
+            for missing_field in ("collision_clearance_validated", "tcp_vertical_clearance_conservative_mm"):
+                transport = site["transport"]
+                transport.update({"transport_validated": True, "kinematics_validated": True,
+                                  "collision_clearance_validated": True,
+                                  "tcp_vertical_clearance_conservative_mm": 10.0})
+                transport.pop(missing_field)
+                missing_profile = tmp_path / f"missing-{missing_field}.yaml"
+                missing_profile.write_text(yaml.safe_dump(site), encoding="utf-8")
+                missing_result = tmp_path / f"missing-{missing_field}.json"
+                blocked = subprocess.run(
+                    [sys.executable, str(PLACE), "--venue-profile", str(missing_profile),
+                     "--result-json", str(missing_result)],
+                    env=env, text=True, capture_output=True, check=False,
+                )
+                self.assertEqual(blocked.returncode, 2)
+                self.assertIn("transport_motion_not_fully_validated", missing_result.read_text(encoding="utf-8"))
 
     def test_engine_sidecar_fault_matrix(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -122,9 +242,23 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             manifest = tmp_path / "model.engine.manifest.json"
             manifest.write_text(json.dumps({"onnx_sha256": EXPECTED_ONNX, "engine_sha256": hashlib.sha256(engine.read_bytes()).hexdigest(),
                 "tensorrt_version": "8", "cuda_version": "11.4", "input_shape": [1, 3, 416, 416],
-                "output_layout": "yolov5:[1,N,5+C]", "precision": "fp16"}), encoding="utf-8")
+                "output_layout": "yolov5:[1,N,5+C]", "precision": "fp16",
+                "bindings": _engine_bindings()}), encoding="utf-8")
             result = _validate("engine", tmp_path, DEYES_ENGINE_PATH=str(engine), DEYES_ENGINE_MANIFEST=str(manifest))
             self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads((tmp_path / "engine_validation.json").read_text(encoding="utf-8"))
+            self.assertEqual(payload["bindings"], _engine_bindings())
+            bad_bindings = json.loads(manifest.read_text(encoding="utf-8"))
+            bad_bindings["bindings"][1]["shape"] = [1, 10647, 85]
+            manifest.write_text(json.dumps(bad_bindings), encoding="utf-8")
+            result = _validate("engine", tmp_path, DEYES_ENGINE_PATH=str(engine), DEYES_ENGINE_MANIFEST=str(manifest))
+            self.assertNotEqual(result.returncode, 0); self.assertIn("output binding", result.stderr)
+            bad_bindings.pop("bindings")
+            manifest.write_text(json.dumps(bad_bindings), encoding="utf-8")
+            result = _validate("engine", tmp_path, DEYES_ENGINE_PATH=str(engine), DEYES_ENGINE_MANIFEST=str(manifest))
+            self.assertNotEqual(result.returncode, 0); self.assertIn("engine manifest missing: bindings", result.stderr)
+            bad_bindings["bindings"] = _engine_bindings()
+            manifest.write_text(json.dumps(bad_bindings), encoding="utf-8")
             engine.write_bytes(b"tampered")
             result = _validate("engine", tmp_path, DEYES_ENGINE_PATH=str(engine), DEYES_ENGINE_MANIFEST=str(manifest))
             self.assertNotEqual(result.returncode, 0); self.assertIn("engine SHA", result.stderr)
@@ -185,8 +319,13 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
                 "condition_b_roi_clear_3_and_feedback_delta_5": True,
                 "feedback_evidence": {"schema": "competition_grasp_feedback/v1", "live": True,
                     "source": "live_ros2_and_mercury_feedback", "roi_pen_last3": [False, False, False],
+                    "detector_frames_last3_ambiguous": [False, False, False],
                     "gripper_feedback_delta": 6.0}}))
             self.assertEqual(_validate("grasp", tmp_path).returncode, 0)
+            grasp_payload = json.loads(grasp.read_text(encoding="utf-8"))
+            del grasp_payload["feedback_evidence"]["detector_frames_last3_ambiguous"]
+            grasp.write_text(json.dumps(grasp_payload), encoding="utf-8")
+            self.assertNotEqual(_validate("grasp", tmp_path).returncode, 0)
             place = tmp_path / "place.json"; place.write_text('{"success": false}')
             self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
             place.write_text('{"schema": "competition_place_execution/v1", "success": true}')
@@ -201,6 +340,9 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             fixture = tmp_path / "boxes.jsonl"
             frames = [
                 {"stamp_sec": 1, "stamp_nanosec": index, "model_id": "pen-yolov5-student-01875-416-v1",
+                 "complete": True, "ambiguous": False, "rejection_reason": "",
+                 "auto_grasp_permitted": bool(detections),
+                 "detection_count": len(detections), "observed_detection_count": len(detections),
                  "detections": detections}
                 for index, detections in enumerate((
                     [{"bbox_xyxy": [190, 110, 220, 130]}], [], [], []
@@ -217,6 +359,7 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             self.assertEqual(data["schema"], "competition_grasp_feedback/v1")
             self.assertEqual(data["roi_pen_last3"], [False, False, False])
             self.assertEqual(data["gripper_feedback_delta"], 6.0)
+            self.assertEqual(data["detector_frames_last3_ambiguous"], [False, False, False])
 
             target.write_text(json.dumps({"schema": "competition_pick_target/v1", "valid": True,
                                           "pixel_uv": None}), encoding="utf-8")
@@ -230,7 +373,10 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             target.write_text(json.dumps({"schema": "competition_pick_target/v1", "valid": True,
                                           "pixel_uv": [200, 120]}), encoding="utf-8")
             fixture.write_text("".join(json.dumps({"stamp_sec": 2, "stamp_nanosec": index,
-                "model_id": "pen-yolov5-student-01875-416-v1", "detections": ["corrupt"]}) + "\n"
+                "model_id": "pen-yolov5-student-01875-416-v1", "complete": True,
+                "ambiguous": False, "rejection_reason": "", "auto_grasp_permitted": True,
+                "detection_count": 1, "observed_detection_count": 1,
+                "detections": ["corrupt"]}) + "\n"
                 for index in range(3)), encoding="utf-8")
             corrupt = subprocess.run([sys.executable, str(GRASP_ADAPTER), "--target-json", str(target),
                                       "--output", str(output), "--detections-fixture", str(fixture),
@@ -238,6 +384,37 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
                                      text=True, capture_output=True, check=False)
             self.assertNotEqual(corrupt.returncode, 0)
             self.assertIn("detection item must be an object", corrupt.stderr)
+
+    def test_grasp_feedback_adapter_rejects_ambiguous_rejected_or_count_inconsistent_frames(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp_path = Path(directory)
+            target = tmp_path / "target.json"
+            target.write_text(json.dumps({"schema": "competition_pick_target/v1", "valid": True,
+                                          "pixel_uv": [200, 120]}), encoding="utf-8")
+            base = {"stamp_sec": 1, "stamp_nanosec": 1, "model_id": "pen-yolov5-student-01875-416-v1",
+                    "complete": True, "ambiguous": False, "rejection_reason": "",
+                    "auto_grasp_permitted": False, "detection_count": 0,
+                    "observed_detection_count": 0, "detections": []}
+            cases = (
+                ({**base, "ambiguous": True, "rejection_reason": "ambiguous_multi_target"}, "ambiguous"),
+                ({**base, "rejection_reason": "detector_rejected"}, "rejection_reason"),
+                ({**base, "detection_count": 1}, "detection_count"),
+                ({**base, "observed_detection_count": 1}, "observed_detection_count"),
+                ({key: value for key, value in base.items() if key != "complete"}, "complete"),
+            )
+            for index, (frame, reason) in enumerate(cases):
+                frame["stamp_nanosec"] = index + 1
+                fixture = tmp_path / f"bad-{index}.jsonl"
+                fixture.write_text(json.dumps(frame) + "\n", encoding="utf-8")
+                result = subprocess.run(
+                    [sys.executable, str(GRASP_ADAPTER), "--target-json", str(target),
+                     "--output", str(tmp_path / f"out-{index}.json"),
+                     "--detections-fixture", str(fixture), "--empty-closed-feedback", "10",
+                     "--gripper-feedback", "16"],
+                    text=True, capture_output=True, check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(reason, result.stderr)
 
 
 if __name__ == "__main__":

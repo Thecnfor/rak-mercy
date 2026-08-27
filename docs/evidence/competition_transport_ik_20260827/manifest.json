@@ -51,6 +51,9 @@
     "conservative_minimum_mm": 0.0
   },
   "collision_clearance_validated": false,
+  "kinematics_validated": true,
+  "production_motion_admitted": false,
+  "production_unlock_requirement": "Field-validated positive conservative collision clearance and an updated audited venue profile are required before Mercury construction, power-on, gripper, pick, or place commands.",
   "limitations": [
     "The 5 mm minimum is a nominal TCP Z delta at the 140 mm approach stage, not measured physical clearance.",
     "The 5 mm XYZ feedback tolerance consumes the entire nominal minimum, so the conservative lower bound is 0 mm.",

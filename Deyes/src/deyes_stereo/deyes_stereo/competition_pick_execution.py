@@ -24,6 +24,25 @@ class MotionProfile:
     gripper_open: int = 70
     gripper_closed: int = 0
     transport_validated: bool = False
+    kinematics_validated: bool = False
+    collision_clearance_validated: bool = False
+    conservative_clearance_mm: float = 0.0
+
+    def require_hardware_admission(self) -> None:
+        """Reject before robot construction or the first hardware command."""
+        if not (
+            self.transport_validated
+            and self.kinematics_validated
+            and self.collision_clearance_validated
+            and self.conservative_clearance_mm > 0.0
+        ):
+            raise RuntimeError(
+                "transport_motion_not_fully_validated:"
+                f"transport={self.transport_validated},"
+                f"kinematics={self.kinematics_validated},"
+                f"collision_clearance={self.collision_clearance_validated},"
+                f"conservative_clearance_mm={self.conservative_clearance_mm}"
+            )
 
 
 def _pose(x: float, y: float, z: float) -> tuple[float, ...]: return (x, y, z, *ORIENTATION)
@@ -64,7 +83,9 @@ class Mercury650Executor:
 
     def pick(self, x_mm: float, y_mm: float) -> list[dict]:
         if self._pick_attempted: raise RuntimeError("pick_attempt_already_latched")
-        self._pick_attempted = True; trace = []
+        self._pick_attempted = True
+        self.profile.require_hardware_admission()
+        trace = []
         self.robot.set_gripper_value(self.profile.gripper_open, 20); _status_ok(self.robot)
         for name, z, speed in (("high", self.profile.high_z_mm, 8), ("pregrasp", self.profile.pregrasp_z_mm, 8),
                                ("approach", self.profile.approach_z_mm, 5), ("contact", self.profile.contact_z_mm, 5)):
@@ -72,13 +93,11 @@ class Mercury650Executor:
         self.robot.set_gripper_value(self.profile.gripper_closed, 20); _status_ok(self.robot); trace.append({"phase":"close","value":0})
         for z in self.profile.lift_z_mm:
             pose = _pose(x_mm, y_mm, z); self._move(pose, 8); trace.append({"phase":"lift","pose":pose,"speed":8})
-        if not self.profile.transport_validated:
-            raise RuntimeError("transport_pose_not_ik_validated")
         self._move(TRANSPORT_POSE, 8); trace.append({"phase":"transport","pose":TRANSPORT_POSE,"speed":8})
         return trace
 
     def place(self, x_mm: float, y_mm: float) -> list[dict]:
-        if not self.profile.transport_validated: raise RuntimeError("transport_pose_not_ik_validated")
+        self.profile.require_hardware_admission()
         trace=[]
         for name,z,speed in (("place_pre",self.profile.place_pre_z_mm,8),("release",self.profile.release_z_mm,5)):
             pose=_pose(x_mm,y_mm,z); self._move(pose,speed); trace.append({"phase":name,"pose":pose,"speed":speed})

@@ -255,8 +255,24 @@ def test_node_source_no_longer_publishes_waiting_placeholder() -> None:
     assert "waiting_for_exact_stamp_projector_adapter" not in source
     assert "build_competition_pick_target(" in source
     assert "ExactStampSnapshotJoiner" in source
-    assert "TARGET_OUTPUT_QUEUE_DEPTH = 1" in source
-    assert 'self.create_publisher(\n                String,\n                str(self.get_parameter("output_topic").value),\n                TARGET_OUTPUT_QUEUE_DEPTH,' in source
+    assert "DurabilityPolicy.TRANSIENT_LOCAL" in source
+    assert "ReliabilityPolicy.RELIABLE" in source
+    yolo_source = (ROOT / "src/deyes_stereo/deyes_stereo/yolo_detector_node.py").read_text(encoding="utf-8")
+    assert '"complete": True' in yolo_source
+
+
+@pytest.mark.parametrize("field", ["complete", "auto_grasp_permitted"])
+def test_target_rejects_detection_when_required_completion_gate_is_missing(
+    tmp_path: Path, field: str
+) -> None:
+    snapshot = _snapshot()
+    del snapshot.detection[field]
+    result = build_target_from_snapshot(
+        snapshot, _runtime(tmp_path, usable=True),
+        allow_bbox_center=False, force_fixed_target=False,
+    )
+    assert result["valid"] is False
+    assert result["reason"] == "detection_not_complete_or_auto_grasp_permitted"
 
 
 def test_snapshot_adapter_rejects_untrusted_random_xy_and_accepts_only_forced_marker() -> None:
@@ -293,6 +309,12 @@ def test_snapshot_adapter_rejects_untrusted_random_xy_and_accepts_only_forced_ma
         "commands_emitted": True,
     }
     assert adapter.validate_target(malformed_trusted)[2] == 3
+
+
+def test_snapshot_adapter_uses_reliable_transient_local_qos() -> None:
+    source = (ROOT.parent / "tools/competition_target_snapshot_adapter.py").read_text(encoding="utf-8")
+    assert "DurabilityPolicy.TRANSIENT_LOCAL" in source
+    assert "ReliabilityPolicy.RELIABLE" in source
 
 
 def test_offline_fixture_cli_uses_same_contract_and_writes_one_target(tmp_path: Path) -> None:

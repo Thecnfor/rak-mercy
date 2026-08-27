@@ -100,7 +100,11 @@ def _axis_midpoint(features: Mapping[str, Any]) -> tuple[tuple[float, float] | N
 
 def _bbox_center(detection: Mapping[str, Any], width: int, height: int, margin: int) -> tuple[tuple[float, float] | None, str | None]:
     boxes = detection.get("detections", detection.get("boxes", []))
-    if detection.get("complete") is False or len(boxes) != 1:
+    if (
+        detection.get("complete") is not True
+        or detection.get("auto_grasp_permitted") is not True
+        or len(boxes) != 1
+    ):
         return None, None
     box = boxes[0]
     raw = box.get("bbox_xyxy", box.get("xyxy"))

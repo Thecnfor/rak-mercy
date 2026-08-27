@@ -35,7 +35,7 @@ FIXED_TARGET_MANUAL_ACTION = (
 )
 FIXTURE_SCHEMA = "competition_pick_target_fixture/v1"
 INPUT_KINDS = ("detection", "pen_features", "depth", "camera_info", "ground_plane")
-TARGET_OUTPUT_QUEUE_DEPTH = 1  # Reliable default QoS; snapshot subscriber is reliable.
+TARGET_OUTPUT_QUEUE_DEPTH = 1  # Reliable transient-local terminal result.
 
 
 def _stamp(payload: Mapping[str, Any]) -> int:
@@ -390,8 +390,8 @@ def _validate_snapshot(
     if not isinstance(boxes, list) or len(boxes) != 1:
         return "detection_count_must_be_exactly_one"
     if (
-        snapshot.detection.get("complete") is False
-        or snapshot.detection.get("auto_grasp_permitted") is False
+        snapshot.detection.get("complete") is not True
+        or snapshot.detection.get("auto_grasp_permitted") is not True
     ):
         return "detection_not_complete_or_auto_grasp_permitted"
     features = snapshot.pen_features.get("features", [])
@@ -511,7 +511,13 @@ def main(args: Any = None) -> int:
     try:
         import rclpy
         from rclpy.node import Node
-        from rclpy.qos import qos_profile_sensor_data
+        from rclpy.qos import (
+            DurabilityPolicy,
+            HistoryPolicy,
+            QoSProfile,
+            ReliabilityPolicy,
+            qos_profile_sensor_data,
+        )
         from sensor_msgs.msg import CameraInfo, Image
         from std_msgs.msg import String
     except ImportError as exc:  # pragma: no cover - exercised on Jetson
@@ -587,10 +593,16 @@ def main(args: Any = None) -> int:
             self._exit_code: int | None = None
             self._exit_after_ns: int | None = None
             self.should_exit = False
+            target_output_qos = QoSProfile(
+                history=HistoryPolicy.KEEP_LAST,
+                depth=TARGET_OUTPUT_QUEUE_DEPTH,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            )
             self._publisher = self.create_publisher(
                 String,
                 str(self.get_parameter("output_topic").value),
-                TARGET_OUTPUT_QUEUE_DEPTH,
+                target_output_qos,
             )
             self.create_subscription(
                 String,

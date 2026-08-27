@@ -51,6 +51,22 @@ VISION_PID=""
 NAV_PID=""
 TARGET_PID=""
 TARGET_SNAPSHOT_PID=""
+
+resolve_deyes_python_site() {
+  local python_root
+  python_root="$(
+    set +u
+    unset PYTHONPATH AMENT_PREFIX_PATH COLCON_PREFIX_PATH ROS_DISTRO ROS_VERSION ROS_PACKAGE_PATH CMAKE_PREFIX_PATH
+    # shellcheck disable=SC1091
+    source "${ROS2_SETUP:-/opt/ros/galactic/setup.bash}"
+    # shellcheck disable=SC1091
+    source "$DEYES_INSTALL/setup.bash"
+    "$PYTHON_BIN" -c 'import pathlib, deyes_stereo; print(pathlib.Path(deyes_stereo.__file__).resolve().parent.parent)'
+  )"
+  [[ -n "$python_root" && -d "$python_root" ]] || die "installed deyes_stereo Python package not found under $DEYES_INSTALL"
+  printf '%s\n' "$python_root"
+}
+
 trace() {
   local event="$1" status="$2" detail="${3:-}"
   TRACE_EVENT="$event" TRACE_STATUS="$status" TRACE_DETAIL="$detail" TRACE_TX="$TRANSACTION_ID" \
@@ -118,6 +134,8 @@ trap 'on_signal INT 130' INT
 trap 'on_signal TERM 143' TERM
 
 source_ros1() {
+  local deyes_site
+  deyes_site="$(resolve_deyes_python_site)"
   unset AMENT_PREFIX_PATH COLCON_PREFIX_PATH ROS_DISTRO ROS_VERSION ROS_PYTHON_VERSION
   unset PYTHONPATH ROS_PACKAGE_PATH CMAKE_PREFIX_PATH
   export LD_LIBRARY_PATH="$BASE_LD_LIBRARY_PATH"
@@ -127,6 +145,9 @@ source_ros1() {
   source "${ROS1_SETUP:-/opt/ros/noetic/setup.bash}"
   # shellcheck disable=SC1091
   source "${MERCURY_ROS1_SETUP:-/home/elephant/mercury_x1_ros/devel/setup.bash}"
+  # place_pen_degraded imports the ROS-free execution contract after ROS 1 is
+  # sourced; retain only the installed Deyes Python package path explicitly.
+  export PYTHONPATH="$deyes_site${PYTHONPATH:+:$PYTHONPATH}"
 }
 
 source_ros2() {
@@ -165,17 +186,41 @@ validate_engine_manifest() {
 import hashlib, json, os, pathlib, sys
 manifest_path = pathlib.Path(sys.argv[1])
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-required = {"onnx_sha256", "engine_sha256", "tensorrt_version", "cuda_version", "input_shape", "output_layout", "precision"}
+required = {"onnx_sha256", "engine_sha256", "tensorrt_version", "cuda_version", "input_shape", "output_layout", "precision", "bindings"}
 missing = sorted(required - manifest.keys())
 if missing: raise SystemExit("engine manifest missing: " + ",".join(missing))
 if manifest["onnx_sha256"].lower() != os.environ["EXPECTED_ONNX_SHA256"]: raise SystemExit("manifest ONNX SHA mismatch")
 if manifest["precision"].lower() != "fp16": raise SystemExit("engine precision is not FP16")
 if manifest["input_shape"] != [1, 3, 416, 416]: raise SystemExit("engine input shape is not [1,3,416,416]")
 if manifest["output_layout"] != "yolov5:[1,N,5+C]": raise SystemExit("unsupported engine output layout")
+bindings = manifest["bindings"]
+if not isinstance(bindings, list) or len(bindings) != 2:
+    raise SystemExit("engine bindings must contain exactly one input and one output")
+for binding in bindings:
+    if not isinstance(binding, dict): raise SystemExit("engine binding entry must be an object")
+    binding_missing = sorted({"index", "name", "io", "shape", "dtype"} - binding.keys())
+    if binding_missing: raise SystemExit("engine binding missing: " + ",".join(binding_missing))
+    if not isinstance(binding["index"], int) or binding["index"] < 0: raise SystemExit("engine binding index is invalid")
+    if not isinstance(binding["name"], str) or not binding["name"]: raise SystemExit("engine binding name is invalid")
+    if binding["io"] not in ("input", "output"): raise SystemExit("engine binding io must be input or output")
+    if not isinstance(binding["shape"], list) or not all(isinstance(value, int) for value in binding["shape"]):
+        raise SystemExit("engine binding shape is invalid")
+if len({binding["index"] for binding in bindings}) != 2 or len({binding["name"] for binding in bindings}) != 2:
+    raise SystemExit("engine binding indexes and names must be unique")
+inputs = [binding for binding in bindings if binding["io"] == "input"]
+outputs = [binding for binding in bindings if binding["io"] == "output"]
+if len(inputs) != 1 or len(outputs) != 1: raise SystemExit("engine bindings must contain exactly one input and one output")
+if inputs[0]["shape"] != [1, 3, 416, 416] or inputs[0]["dtype"] != "float32":
+    raise SystemExit("engine input binding ABI mismatch")
+output_shape = outputs[0]["shape"]
+if len(output_shape) != 3 or output_shape[0] != 1 or output_shape[1] <= 0 or output_shape[2] != 6:
+    raise SystemExit("engine output binding ABI mismatch for one-class YOLOv5")
+if outputs[0]["dtype"] not in ("float16", "float32"):
+    raise SystemExit("engine output binding dtype mismatch")
 engine = pathlib.Path(os.environ["EXPECTED_ENGINE_PATH"])
 actual = hashlib.sha256(engine.read_bytes()).hexdigest()
 if actual != manifest["engine_sha256"].lower(): raise SystemExit("engine SHA does not match deployment sidecar")
-print(json.dumps({"validated": True, "engine_sha256": actual, "manifest": str(manifest_path)}, sort_keys=True))
+print(json.dumps({"validated": True, "engine_sha256": actual, "manifest": str(manifest_path), "bindings": bindings}, sort_keys=True))
 PY
   cp "$ENGINE_MANIFEST" "$LOG_DIR/engine_manifest.json"
   ENGINE_SHA256="$("$PYTHON_BIN" -c 'import json,sys; print(json.load(open(sys.argv[1]))["engine_sha256"])' "$ENGINE_MANIFEST")"
@@ -271,7 +316,7 @@ if data.get("single_attempt_latched") is not True or data.get("condition_b_roi_c
 if not isinstance(evidence, dict) or evidence.get("schema") != "competition_grasp_feedback/v1": raise SystemExit("grasp feedback evidence missing")
 if evidence.get("live") is not True or evidence.get("source") != "live_ros2_and_mercury_feedback": raise SystemExit("grasp feedback is not live")
 delta = float(evidence.get("gripper_feedback_delta", float("-inf")))
-if evidence.get("roi_pen_last3") != [False, False, False] or not math.isfinite(delta) or delta < 5.0:
+if evidence.get("roi_pen_last3") != [False, False, False] or evidence.get("detector_frames_last3_ambiguous") != [False, False, False] or not math.isfinite(delta) or delta < 5.0:
     raise SystemExit("grasp feedback does not prove ROI clear and gripper delta")
 PY
 }

@@ -10,7 +10,9 @@ class FakeMercury:
     def set_gripper_value(self,value,speed): self.calls.append(("gripper",value,speed))
 
 def test_exact_pick_sequence_direction_speeds_feedback_and_single_latch():
-    fake=FakeMercury(); ex=Mercury650Executor(fake,MotionProfile(transport_validated=True))
+    fake=FakeMercury(); ex=Mercury650Executor(fake,MotionProfile(
+        transport_validated=True, kinematics_validated=True,
+        collision_clearance_validated=True, conservative_clearance_mm=1.0))
     trace=ex.pick(401,9)
     assert [item[0] for item in fake.calls]==["gripper"]+["move"]*4+["gripper"]+["move"]*3
     assert [c[1][2] for c in fake.calls if c[0]=="move"]==[235,180,140,135,180,235,260]
@@ -20,17 +22,40 @@ def test_exact_pick_sequence_direction_speeds_feedback_and_single_latch():
     with pytest.raises(RuntimeError,match="already_latched"): ex.pick(401,9)
 
 def test_place_sequence_and_direction():
-    fake=FakeMercury(); Mercury650Executor(fake,MotionProfile(transport_validated=True)).place(390,-5)
+    fake=FakeMercury(); Mercury650Executor(fake,MotionProfile(
+        transport_validated=True, kinematics_validated=True,
+        collision_clearance_validated=True, conservative_clearance_mm=1.0)).place(390,-5)
     assert [c[1][2] for c in fake.calls if c[0]=="move"]==[200,165,200,260,260]
     assert [c[2] for c in fake.calls if c[0]=="move"]==[8,5,8,8,8]
 
 def test_status_feedback_and_unvalidated_transport_fail_closed_no_retry():
     with pytest.raises(RuntimeError,match="robot_status_not_ok"):
-        Mercury650Executor(FakeMercury(status=[0,0,1]),MotionProfile(transport_validated=True)).pick(400,10)
+        Mercury650Executor(FakeMercury(status=[0,0,1]),MotionProfile(
+            transport_validated=True, kinematics_validated=True,
+            collision_clearance_validated=True, conservative_clearance_mm=1.0)).pick(400,10)
     fake=FakeMercury()
-    with pytest.raises(RuntimeError,match="transport_pose_not_ik_validated"):
+    with pytest.raises(RuntimeError,match="transport_motion_not_fully_validated"):
         Mercury650Executor(fake,MotionProfile(transport_validated=False)).pick(400,10)
-    assert len([c for c in fake.calls if c[0]=="move"])==6
+    assert fake.calls == []
+
+
+@pytest.mark.parametrize(
+    "profile",
+    [
+        MotionProfile(transport_validated=True, kinematics_validated=True,
+                      collision_clearance_validated=False, conservative_clearance_mm=1.0),
+        MotionProfile(transport_validated=True, kinematics_validated=True,
+                      collision_clearance_validated=True, conservative_clearance_mm=0.0),
+        MotionProfile(transport_validated=True, kinematics_validated=False,
+                      collision_clearance_validated=True, conservative_clearance_mm=1.0),
+    ],
+)
+def test_missing_clearance_or_kinematics_blocks_pick_and_place_before_any_command(profile):
+    for method in ("pick", "place"):
+        fake=FakeMercury()
+        with pytest.raises(RuntimeError,match="transport_motion_not_fully_validated"):
+            getattr(Mercury650Executor(fake,profile),method)(400,10)
+        assert fake.calls == []
 
 def test_pose_error_and_timeout_are_enforced():
     fake=FakeMercury(offset=[6,0,0,0,0,0])
@@ -38,7 +63,9 @@ def test_pose_error_and_timeout_are_enforced():
         actual=robot.get_base_coords()
         if max(abs(actual[i]-expected[i]) for i in range(3))>5: raise RuntimeError("pose_timeout")
     with pytest.raises(RuntimeError,match="pose_timeout"):
-        Mercury650Executor(fake,MotionProfile(transport_validated=True),waiter=one_shot_wait).pick(400,10)
+        Mercury650Executor(fake,MotionProfile(
+            transport_validated=True, kinematics_validated=True,
+            collision_clearance_validated=True, conservative_clearance_mm=1.0),waiter=one_shot_wait).pick(400,10)
 
 def test_grasp_verification_a_or_b_failure_blocks_nav_and_latches():
     assert GraspVerifier(10).verify(pen_height_over_table_m=.03,original_roi_has_pen=[True]*3,gripper_feedback=10)["success"]

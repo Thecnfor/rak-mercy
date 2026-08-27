@@ -851,6 +851,7 @@ class YoloDetectorNode(Node):
             "allowed_class_ids": sorted(self._allowed_class_ids),
             "expected_class_count": self._expected_class_count,
             "expected_max_targets": self._expected_max_targets,
+            "complete": True,
             "auto_grasp_permitted": auto_grasp_permitted,
             "ambiguous": ambiguous_reason is not None,
             "rejection_reason": ambiguous_reason or "",
