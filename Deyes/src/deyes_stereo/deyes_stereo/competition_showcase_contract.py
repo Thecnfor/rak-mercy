@@ -15,9 +15,7 @@ RECOVERABLE_SHOWCASE_FAILURES = frozenset(
         "runtime_camera_exit",
         "runtime_cuda_exit",
         "runtime_yolo_exit",
-        "target_node_exit",
         "target_timeout",
-        "target_rejected",
         "target_zero_objects",
         "target_multiple_objects",
         "exact_stamp_mismatch",
@@ -41,15 +39,25 @@ def classify_showcase_failure(failure_code: str, *, showcase_enabled: bool) -> s
 def runtime_perception_failure_code(reason: str) -> str:
     """Normalize runner details without weakening the healthy-plane hard gate."""
     value = reason.lower()
+    if "rc=4" in value:
+        return "target_configuration_or_contract"
     if "table_height_deviation_exceeds_25mm" in value:
         return "healthy_plane_deviation_over_25mm"
+    if any(token in value for token in (
+        "parameter_environment_mismatch",
+        "projector_evidence_invalid",
+        "venue_profile_schema_invalid",
+        "python unavailable",
+        "json malformed",
+    )):
+        return "target_configuration_or_contract"
     if "runtime_vision_launch_exited" in value:
         return "runtime_camera_exit"
-    if "competition_target_node_exited" in value:
-        return "target_node_exit"
     if "timeout" in value or "rc=2" in value:
         return "target_timeout"
-    if "zero" in value or "no_eligible" in value:
+    if any(token in value for token in (
+        "zero", "no_eligible", "no_observed", "detection_not_complete",
+    )):
         return "target_zero_objects"
     if "multiple" in value or "ambiguous" in value:
         return "target_multiple_objects"
@@ -61,9 +69,18 @@ def runtime_perception_failure_code(reason: str) -> str:
         return "depth_invalid"
     if "feature" in value or "axis" in value:
         return "pen_feature_invalid"
-    if "projector" in value or "pnp" in value or "reprojection" in value:
+    if any(token in value for token in (
+        "projector", "pnp", "reprojection", "touch_plane", "ray_",
+        "workspace", "convex_hull",
+    )):
         return "pnp_rejected"
-    return "target_rejected"
+    if "runtime_camera" in value:
+        return "runtime_camera_exit"
+    if "runtime_cuda" in value:
+        return "runtime_cuda_exit"
+    if "runtime_yolo" in value or "runtime_detector" in value:
+        return "runtime_yolo_exit"
+    return "unknown_target_failure"
 
 
 def build_showcase_target(reason: str) -> dict[str, Any]:
@@ -143,6 +160,7 @@ def decide_pick_continuation(
         result.get("motion_completed") is True
         and result.get("transport_pose_reached") is True
         and result.get("hardware_ok") is True
+        and result.get("commands_emitted") is True
     )
     object_verified = result.get("object_grasp_verified") is True
     competition_success = (

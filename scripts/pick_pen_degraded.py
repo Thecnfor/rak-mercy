@@ -69,6 +69,19 @@ def _capture_feedback(adapter: Path, target_json: Path, output: Path, *, empty_c
     return data
 
 
+def _require_target_xy_binding(document: dict, x_mm: float, y_mm: float) -> None:
+    sdk=document.get("right_arm_sdk_target_m")
+    if not isinstance(sdk,list) or len(sdk)<2:
+        raise RuntimeError("target_xy_missing")
+    try: expected=(float(sdk[0])*1000.0,float(sdk[1])*1000.0)
+    except (TypeError,ValueError) as exc: raise RuntimeError("target_xy_invalid") from exc
+    if not all(math.isfinite(value) for value in (*expected,x_mm,y_mm)):
+        raise RuntimeError("target_xy_invalid")
+    if not (math.isclose(x_mm,expected[0],abs_tol=1e-6)
+            and math.isclose(y_mm,expected[1],abs_tol=1e-6)):
+        raise RuntimeError(f"target_xy_argument_mismatch:expected={expected},actual={(x_mm,y_mm)}")
+
+
 def main() -> int:
     parser=argparse.ArgumentParser()
     parser.add_argument("--x-mm",type=float,default=float(os.environ.get("DEGRADED_PICK_X","400")))
@@ -98,24 +111,33 @@ def main() -> int:
     try:
         if args.result_json is None or (args.target_json is None and args.showcase_target_json is None):
             raise RuntimeError("live_pick_requires_result_and_target_json_paths")
-        showcase_target=None
+        showcase_target=None; target_document=None
         if args.showcase_target_json is not None:
             showcase_target=validate_showcase_target(json.loads(
                 args.showcase_target_json.read_text(encoding="utf-8")
             ))
+            target_document=showcase_target
         elif args.feedback_json is None:
             raise RuntimeError("verified_live_pick_requires_feedback_json_path")
         elif not args.feedback_adapter.is_file():
             raise RuntimeError(f"grasp_feedback_adapter_missing:{args.feedback_adapter}")
+        else:
+            target_document=json.loads(args.target_json.read_text(encoding="utf-8"))
+            if target_document.get("schema")!="competition_pick_target/v1":
+                raise RuntimeError("competition_target_schema_mismatch")
+        _require_target_xy_binding(target_document,args.x_mm,args.y_mm)
         profile.require_hardware_admission()
         from pymycobot import Mercury
         arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
-        if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
+        if arm.is_power_on()!=1:
+            commands_emitted=True
+            arm.power_on(); time.sleep(1.5)
+            if arm.is_power_on()!=1: raise RuntimeError("power_on_feedback_failed")
         commands_emitted=True
         arm.set_gripper_mode(0)
         arm.set_gripper_value(profile.gripper_closed,20); time.sleep(.5)
         empty_closed=_stable_gripper_feedback(arm)
-        trace=Mercury650Executor(arm,profile).pick(args.x_mm,args.y_mm)
+        trace=Mercury650Executor(arm,profile,trace_sink=trace).pick(args.x_mm,args.y_mm)
         motion_completed=True
         transport_pose_reached=bool(trace and trace[-1].get("phase")=="transport")
         gripper_feedback=_stable_gripper_feedback(arm)
@@ -144,7 +166,7 @@ def main() -> int:
                        "hardware_ok":hardware_ok,
                        "object_grasp_verified":result.get("success") is True,
                        "commands_emitted":commands_emitted})
-    except (ImportError,RuntimeError,OSError,TypeError,ValueError,json.JSONDecodeError) as exc:
+    except (ImportError,RuntimeError,OSError,TypeError,ValueError,AttributeError,json.JSONDecodeError) as exc:
         result={"schema":"competition_grasp_verification/v1","success":False,
                 "navigation_permitted":False,"reason":str(exc),
                 "verification_failure_class":"hardware",

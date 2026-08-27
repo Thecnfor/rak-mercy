@@ -70,8 +70,12 @@ def wait_pose(robot: Any, expected: tuple[float, ...], *, timeout: float = 8.0,
 
 
 class Mercury650Executor:
-    def __init__(self, robot: Any, profile: MotionProfile = MotionProfile(), *, waiter=wait_pose):
+    def __init__(self, robot: Any, profile: MotionProfile = MotionProfile(), *, waiter=wait_pose,
+                 release_feedback_check: Callable[[Any], float] | None = None,
+                 trace_sink: list[dict] | None = None):
         self.robot, self.profile, self.waiter = robot, profile, waiter
+        self.release_feedback_check = release_feedback_check
+        self.trace_sink = trace_sink
         self._pick_attempted = False
 
     def _move(self, pose: tuple[float, ...], speed: int) -> None:
@@ -85,7 +89,7 @@ class Mercury650Executor:
         if self._pick_attempted: raise RuntimeError("pick_attempt_already_latched")
         self._pick_attempted = True
         self.profile.require_hardware_admission()
-        trace = []
+        trace = self.trace_sink if self.trace_sink is not None else []
         self.robot.set_gripper_value(self.profile.gripper_open, 20); _status_ok(self.robot)
         for name, z, speed in (("high", self.profile.high_z_mm, 8), ("pregrasp", self.profile.pregrasp_z_mm, 8),
                                ("approach", self.profile.approach_z_mm, 5), ("contact", self.profile.contact_z_mm, 5)):
@@ -98,10 +102,13 @@ class Mercury650Executor:
 
     def place(self, x_mm: float, y_mm: float) -> list[dict]:
         self.profile.require_hardware_admission()
-        trace=[]
+        trace=self.trace_sink if self.trace_sink is not None else []
         for name,z,speed in (("place_pre",self.profile.place_pre_z_mm,8),("release",self.profile.release_z_mm,5)):
             pose=_pose(x_mm,y_mm,z); self._move(pose,speed); trace.append({"phase":name,"pose":pose,"speed":speed})
-        self.robot.set_gripper_value(self.profile.gripper_open,20); _status_ok(self.robot); trace.append({"phase":"open","value":70})
+        self.robot.set_gripper_value(self.profile.gripper_open,20); _status_ok(self.robot)
+        opened={"phase":"open","value":70}; trace.append(opened)
+        if self.release_feedback_check is not None:
+            opened["feedback"]=self.release_feedback_check(self.robot)
         for z in self.profile.retreat_z_mm:
             pose=_pose(x_mm,y_mm,z); self._move(pose,8); trace.append({"phase":"retreat","pose":pose,"speed":8})
         self._move(TRANSPORT_POSE,8); trace.append({"phase":"transport","pose":TRANSPORT_POSE,"speed":8})

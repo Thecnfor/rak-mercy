@@ -419,7 +419,7 @@ validate_place() {
 import json, os, pathlib
 data = json.loads(pathlib.Path(os.environ["PLACE_FILE"]).read_text(encoding="utf-8"))
 if (data.get("schema") != "competition_place_execution/v1" or data.get("success") is not True
-        or data.get("motion_completed") is not True):
+        or data.get("motion_completed") is not True or data.get("commands_emitted") is not True):
     raise SystemExit("place completion result is not successful")
 state=data.get("object_state")
 if state not in ("verified","unverified"): raise SystemExit("place object_state is invalid")

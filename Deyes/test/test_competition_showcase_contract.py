@@ -48,6 +48,7 @@ def test_object_not_verified_continues_only_as_truthful_showcase() -> None:
         "object_grasp_verified": False,
         "verification_failure_class": "object_absent",
         "reason": "grasp_not_verified",
+        "commands_emitted": True,
     }
 
     assert decide_pick_continuation(result, showcase_enabled=True) == {
@@ -70,6 +71,7 @@ def test_verified_pick_preserves_normal_competition_success() -> None:
         "object_grasp_verified": True,
         "verification_failure_class": None,
         "reason": "ok",
+        "commands_emitted": True,
     }
 
     decision = decide_pick_continuation(result, showcase_enabled=True)
@@ -89,6 +91,7 @@ def test_strict_mode_and_hardware_faults_never_continue() -> None:
         "object_grasp_verified": False,
         "verification_failure_class": "perception",
         "reason": "roi_feedback_timeout",
+        "commands_emitted": True,
     }
     assert decide_pick_continuation(unverified, showcase_enabled=False)["action"] == "stop"
 
@@ -185,3 +188,33 @@ def test_healthy_plane_rejection_cannot_be_normalized_as_recoverable_perception(
     )
     assert code == "healthy_plane_deviation_over_25mm"
     assert classify_showcase_failure(code, showcase_enabled=True) == "hard_stop"
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "competition_target_failed:rc=4:target JSON malformed",
+        "competition_target_failed:rc=4:ROS 2 Python unavailable",
+        "competition_target_node_exited:force_fixed_target_parameter_environment_mismatch",
+        "competition_target_failed:rc=3:unknown_target_error",
+    ],
+)
+def test_unknown_or_configuration_target_failures_are_hard_stops(reason: str) -> None:
+    code = runtime_perception_failure_code(reason)
+    assert classify_showcase_failure(code, showcase_enabled=True) == "hard_stop"
+
+
+def test_completed_motion_facts_require_a_real_command_latch() -> None:
+    no_command = {
+        "schema": "competition_grasp_verification/v1",
+        "success": False,
+        "navigation_permitted": False,
+        "motion_completed": True,
+        "transport_pose_reached": True,
+        "hardware_ok": True,
+        "object_grasp_verified": False,
+        "verification_failure_class": "object_absent",
+        "reason": "grasp_not_verified",
+        "commands_emitted": False,
+    }
+    assert decide_pick_continuation(no_command, showcase_enabled=True)["action"] == "stop"

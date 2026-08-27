@@ -57,6 +57,7 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 | ONNX、engine、sidecar SHA 或实际 TensorRT binding ABI 不符 | 部署或 runner 停止；不复用旧 engine | 不动作 |
 | CUDA/OpenCV 模块、aarch64/7.2 架构或 `ldd` 隔离检查失败 | 部署停止 | 不动作 |
 | dry-run depth < 12 Hz、skew > 10 ms，或 CameraInfo/YOLO/ground plane/pen feature 任一状态/输出 topic 缺失或契约不符 | 部署停止 | 不动作 |
+| target adapter `rc=4`、配置/JSON/ROS 环境错误、未知 node 退出 | runner 硬停止 | 不生成 synthetic target、不动作 |
 | goal3、头部命令或反馈失败 | runner 硬停止 | 不抓取 |
 | YOLO 为零笔、多笔、ambiguous、未完成，或未明确允许自动抓取 | 严格模式停止；默认展示模式生成独立 synthetic `[400,10]` target | 展示空抓、运输、goal4、空放置 |
 | detection、pen feature、32FC1 depth、rectified CameraInfo、ground plane stamp 不完全相同，或 depth 不是 `32FC1` | 严格模式停止；默认展示模式 fixed-marker 续跑 | 不宣称感知成功 |
@@ -68,7 +69,7 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 | 固定 XY 未显式允许 | target 停止 | 不抓取 |
 | 固定 XY 与 force 未同时启用 | 入口立即停止 | 不会自动改为 `[400,10]` |
 | 固定 XY 已强制，但 target 不是 `selection_source=fixed_xy_fallback`、XY 不是 `[400,10]` mm、或无同 stamp 观测像素 | runner 停止 | 不抓取或不放行抓取验证 |
-| pick 串口、机器人状态、位姿或稳定夹爪反馈失败 | runner 硬停止 | 不去 goal4、不 place |
+| pick/place 串口、上电二次反馈、机器人状态、位姿或稳定夹爪反馈失败 | runner 硬停止；部分命令事实仍保留 `commands_emitted:true` | 不发送后续阶段命令 |
 | pick 动作及运输位姿完成，但 ROI 感知不可用或未证明抓到物体 | 严格模式停止；默认展示模式保持 `navigation_permitted:false` 并用独立 showcase 决策续跑 | goal4、空放置，最终 competition=false/showcase=true |
 | goal4、place 串口/反馈失败或 `place.json` 不成功 | runner 停止 | 不重复执行 |
 

@@ -109,18 +109,18 @@ raise SystemExit(3)
             executable(fake_scripts / "competition_grasp_feedback_adapter.py", "#!/usr/bin/env python3\n")
             executable(fake_scripts / "pick_pen_degraded.py", """#!/usr/bin/env python3
 import argparse,json,os
-p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--showcase-target-json'); p.add_argument('--x-mm'); p.add_argument('--y-mm'); p.add_argument('--venue-profile'); a=p.parse_args()
-assert a.showcase_target_json
+p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--showcase-target-json'); p.add_argument('--target-json'); p.add_argument('--feedback-adapter'); p.add_argument('--feedback-json'); p.add_argument('--x-mm'); p.add_argument('--y-mm'); p.add_argument('--venue-profile'); a=p.parse_args()
 with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('pick_transport\\n')
-json.dump({'schema':'competition_grasp_verification/v1','success':False,'navigation_permitted':False,'motion_completed':True,'transport_pose_reached':True,'hardware_ok':True,'object_grasp_verified':False,'verification_failure_class':'object_absent','reason':'grasp_not_verified'},open(a.result_json,'w'))
-raise SystemExit(2)
+verified=bool(a.target_json)
+json.dump({'schema':'competition_grasp_verification/v1','success':verified,'navigation_permitted':verified,'motion_completed':True,'transport_pose_reached':True,'hardware_ok':True,'object_grasp_verified':verified,'verification_failure_class':None if verified else 'object_absent','reason':'ok' if verified else 'grasp_not_verified','commands_emitted':True},open(a.result_json,'w'))
+raise SystemExit(0 if verified else 2)
 """)
             executable(fake_scripts / "place_pen_degraded.py", """#!/usr/bin/env python3
 import argparse,json,os
 p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--venue-profile'); p.add_argument('--object-state'); p.add_argument('--showcase-mode',action='store_true'); a=p.parse_args()
-assert a.object_state=='unverified' and a.showcase_mode
+assert a.object_state in ('verified','unverified')
 with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('place\\n')
-json.dump({'schema':'competition_place_execution/v1','success':True,'motion_completed':True,'object_state':'unverified','object_delivery_verified':False,'showcase_mode':True},open(a.result_json,'w'))
+json.dump({'schema':'competition_place_execution/v1','success':True,'motion_completed':True,'object_state':a.object_state,'object_delivery_verified':a.object_state=='verified','showcase_mode':a.showcase_mode,'commands_emitted':True},open(a.result_json,'w'))
 """)
 
             engine = tmp / "model.engine"; engine.write_bytes(b"fixture-engine")
@@ -185,6 +185,59 @@ json.dump({'schema':'competition_place_execution/v1','success':True,'motion_comp
             self.assertIn("competition_target_failed", strict_result["hard_stop_reason"])
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
                 "goal3_right", "head",
+            ])
+
+            executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import sys
+print('target JSON malformed',file=sys.stderr)
+raise SystemExit(4)
+""")
+            config_logs = tmp / "target-config-hard-stop-logs"
+            events.write_text("", encoding="utf-8")
+            env.update({
+                "LOG_DIR": str(config_logs),
+                "COMPETITION_TRANSACTION_ID": "fixture-target-config-hard-stop",
+                "COMPETITION_SHOWCASE_CONTINUE": "1",
+            })
+            config_failure = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertNotEqual(config_failure.returncode, 0)
+            config_result = json.loads(
+                (config_logs / "transaction_result.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(config_result["showcase_complete"], False)
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head",
+            ])
+
+            executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import argparse,json
+p=argparse.ArgumentParser(); p.add_argument('--topic'); p.add_argument('--output'); p.add_argument('--timeout'); a=p.parse_args()
+json.dump({'schema':'competition_pick_target/v1','valid':True,'trusted_for_venue_execution':True,'fixed_table_height_m':0.650,'height_verification':'fixed_height_unverified','selection_source':'axis_midpoint','projector_usable_and_validated':True,'degraded':False,'execution_allowed':True,'commands_emitted':False,'right_arm_sdk_target_m':[0.4,0.01,0.135],'orientation_deg':[179.99,-12,0]},open(a.output,'w'))
+""")
+            success_logs = tmp / "verified-success-logs"
+            events.write_text("", encoding="utf-8")
+            env.update({
+                "LOG_DIR": str(success_logs),
+                "COMPETITION_TRANSACTION_ID": "fixture-verified-success",
+                "COMPETITION_SHOWCASE_CONTINUE": "1",
+            })
+            verified = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertEqual(verified.returncode, 0, verified.stderr)
+            verified_result = json.loads(
+                (success_logs / "transaction_result.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(verified_result["competition_success"], True)
+            self.assertIs(verified_result["showcase_complete"], True)
+            self.assertIs(verified_result["object_grasp_verified"], True)
+            self.assertEqual(verified_result["target_source"], "live_competition_target")
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head", "pick_transport", "goal4_back", "place",
             ])
 
             for failed_goal, expected_events in (
@@ -414,7 +467,10 @@ raise SystemExit(3)
                 self.assertIs(plan["transport_validated"], False)
 
             target = tmp_path / "target.json"
-            target.write_text("{}", encoding="utf-8")
+            target.write_text(json.dumps({
+                "schema": "competition_pick_target/v1",
+                "right_arm_sdk_target_m": [0.4, 0.01, 0.135],
+            }), encoding="utf-8")
             pick_result = tmp_path / "pick.json"
             blocked_pick = subprocess.run(
                 [sys.executable, str(PICK), "--venue-profile", str(profile),
@@ -547,15 +603,23 @@ raise SystemExit(3)
             self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
             place.write_text(json.dumps({"schema": "competition_place_execution/v1",
                 "success": True, "motion_completed": True, "object_state": "verified",
-                "object_delivery_verified": True, "showcase_mode": False}))
+                "object_delivery_verified": True, "showcase_mode": False,
+                "commands_emitted": True}))
             self.assertEqual(_validate("place", tmp_path).returncode, 0)
             place.write_text(json.dumps({"schema": "competition_place_execution/v1",
                 "success": True, "motion_completed": True, "object_state": "unverified",
-                "object_delivery_verified": False, "showcase_mode": True}))
+                "object_delivery_verified": False, "showcase_mode": True,
+                "commands_emitted": True}))
             self.assertEqual(_validate("place", tmp_path).returncode, 0)
             place.write_text(json.dumps({"schema": "competition_place_execution/v1",
                 "success": True, "motion_completed": True, "object_state": "unverified",
-                "object_delivery_verified": True, "showcase_mode": True}))
+                "object_delivery_verified": True, "showcase_mode": True,
+                "commands_emitted": True}))
+            self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
+            place.write_text(json.dumps({"schema": "competition_place_execution/v1",
+                "success": True, "motion_completed": True, "object_state": "unverified",
+                "object_delivery_verified": False, "showcase_mode": True,
+                "commands_emitted": False}))
             self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
 
     def test_grasp_feedback_adapter_replays_real_payload_shape_and_requires_three_clear_frames(self) -> None:
