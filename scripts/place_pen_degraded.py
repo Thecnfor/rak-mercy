@@ -29,13 +29,19 @@ def _motion_profile(path: Path) -> MotionProfile:
 def main() -> int:
     parser=argparse.ArgumentParser(); parser.add_argument("--x-mm",type=float,default=400.0); parser.add_argument("--y-mm",type=float,default=10.0)
     parser.add_argument("--venue-profile",type=Path,default=DEFAULT_PROFILE)
+    parser.add_argument("--object-state",choices=("verified","unverified"),default="verified")
+    parser.add_argument("--showcase-mode",action="store_true")
     parser.add_argument("--dry-run",action="store_true"); parser.add_argument("--result-json",type=Path); args=parser.parse_args()
+    if args.object_state=="unverified" and not args.showcase_mode:
+        parser.error("--object-state unverified requires --showcase-mode")
     profile=_motion_profile(args.venue_profile)
     plan={"schema":"competition_place_execution/v1","target_xy_mm":[args.x_mm,args.y_mm],
           "z_sequence_mm":[200,165,200,260],"transport_validated":profile.transport_validated,
           "kinematics_validated":profile.kinematics_validated,
           "collision_clearance_validated":profile.collision_clearance_validated,
           "conservative_clearance_mm":profile.conservative_clearance_mm,
+          "object_state":args.object_state,"showcase_mode":args.showcase_mode,
+          "motion_completed":False,"object_delivery_verified":False,
           "commands_emitted":False}
     if args.dry_run: print(json.dumps(plan)); return 0
     try:
@@ -43,9 +49,17 @@ def main() -> int:
         from pymycobot import Mercury
         arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
         if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
-        result={"schema":"competition_place_execution/v1","success":True,"trace":Mercury650Executor(arm,profile).place(args.x_mm,args.y_mm)}
+        trace=Mercury650Executor(arm,profile).place(args.x_mm,args.y_mm)
+        result={"schema":"competition_place_execution/v1","success":True,
+                "motion_completed":True,"object_state":args.object_state,
+                "object_delivery_verified":args.object_state=="verified",
+                "showcase_mode":args.showcase_mode,"commands_emitted":True,
+                "trace":trace}
     except (ImportError,RuntimeError,OSError,TypeError,ValueError) as exc:
-        result={"schema":"competition_place_execution/v1","success":False,"reason":str(exc)}
+        result={"schema":"competition_place_execution/v1","success":False,
+                "motion_completed":False,"object_state":args.object_state,
+                "object_delivery_verified":False,"showcase_mode":args.showcase_mode,
+                "commands_emitted":False,"reason":str(exc)}
     if args.result_json:
         args.result_json.parent.mkdir(parents=True,exist_ok=True)
         args.result_json.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")

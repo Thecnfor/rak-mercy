@@ -32,6 +32,19 @@ def build_showcase_target(reason: str) -> dict[str, Any]:
     }
 
 
+def validate_showcase_target(candidate: Any) -> dict[str, Any]:
+    """Validate the separate fixed-marker schema used only for motion display."""
+    if not isinstance(candidate, dict) or candidate.get("schema") != "competition_showcase_target/v1":
+        raise ValueError("showcase target schema mismatch")
+    forbidden = {"trusted_for_venue_execution", "force_fixed_target"}
+    if forbidden.intersection(candidate):
+        raise ValueError("showcase target must not claim competition target trust")
+    expected = build_showcase_target(str(candidate.get("degraded_reason", "")))
+    if candidate != expected:
+        raise ValueError("showcase target fixed-marker contract mismatch")
+    return dict(candidate)
+
+
 def decide_pick_continuation(
     result: dict[str, Any], *, showcase_enabled: bool
 ) -> dict[str, Any]:

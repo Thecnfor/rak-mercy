@@ -5,6 +5,7 @@ import argparse, json, math, os, subprocess, sys, time
 from pathlib import Path
 from deyes_stereo.competition_grasp_verification import GraspVerifier
 from deyes_stereo.competition_pick_execution import Mercury650Executor, MotionProfile
+from deyes_stereo.competition_showcase_contract import validate_showcase_target
 
 DEFAULT_PROFILE=Path(os.environ.get("DEGRADED_VENUE_PROFILE","/home/elephant/deyes_competition_assets/competition_venue_65cm.yaml"))
 DEFAULT_FEEDBACK_ADAPTER=Path(os.environ.get("COMPETITION_GRASP_FEEDBACK_ADAPTER","/home/elephant/scripts/competition_grasp_feedback_adapter.py"))
@@ -75,7 +76,9 @@ def main() -> int:
     parser.add_argument("--venue-profile",type=Path,default=DEFAULT_PROFILE)
     parser.add_argument("--dry-run",action="store_true")
     parser.add_argument("--result-json",type=Path)
-    parser.add_argument("--target-json",type=Path)
+    target_group=parser.add_mutually_exclusive_group()
+    target_group.add_argument("--target-json",type=Path)
+    target_group.add_argument("--showcase-target-json",type=Path)
     parser.add_argument("--feedback-adapter",type=Path,default=DEFAULT_FEEDBACK_ADAPTER)
     parser.add_argument("--feedback-json",type=Path)
     parser.add_argument("--feedback-timeout-sec",type=float,default=8.0)
@@ -90,28 +93,65 @@ def main() -> int:
           "conservative_clearance_mm":profile.conservative_clearance_mm,
           "commands_emitted":False}
     if args.dry_run: print(json.dumps(plan)); return 0
+    trace=[]; motion_completed=False; transport_pose_reached=False
+    hardware_ok=False; commands_emitted=False
     try:
-        if args.result_json is None or args.target_json is None or args.feedback_json is None:
-            raise RuntimeError("live_pick_requires_result_target_and_feedback_json_paths")
-        if not args.feedback_adapter.is_file(): raise RuntimeError(f"grasp_feedback_adapter_missing:{args.feedback_adapter}")
+        if args.result_json is None or (args.target_json is None and args.showcase_target_json is None):
+            raise RuntimeError("live_pick_requires_result_and_target_json_paths")
+        showcase_target=None
+        if args.showcase_target_json is not None:
+            showcase_target=validate_showcase_target(json.loads(
+                args.showcase_target_json.read_text(encoding="utf-8")
+            ))
+        elif args.feedback_json is None:
+            raise RuntimeError("verified_live_pick_requires_feedback_json_path")
+        elif not args.feedback_adapter.is_file():
+            raise RuntimeError(f"grasp_feedback_adapter_missing:{args.feedback_adapter}")
         profile.require_hardware_admission()
         from pymycobot import Mercury
         arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
         if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
+        commands_emitted=True
         arm.set_gripper_mode(0)
         arm.set_gripper_value(profile.gripper_closed,20); time.sleep(.5)
         empty_closed=_stable_gripper_feedback(arm)
         trace=Mercury650Executor(arm,profile).pick(args.x_mm,args.y_mm)
+        motion_completed=True
+        transport_pose_reached=bool(trace and trace[-1].get("phase")=="transport")
         gripper_feedback=_stable_gripper_feedback(arm)
-        evidence=_capture_feedback(args.feedback_adapter,args.target_json,args.feedback_json,
-                                   empty_closed=empty_closed,gripper=gripper_feedback,
-                                   timeout_sec=args.feedback_timeout_sec)
-        result=GraspVerifier(empty_closed).verify(pen_height_over_table_m=None,
-            original_roi_has_pen=evidence["roi_pen_last3"],gripper_feedback=gripper_feedback)
-        result["trace"]=trace; result["feedback_evidence"]=evidence
-    except (RuntimeError,OSError,TypeError,ValueError) as exc:
+        hardware_ok=True
+        if showcase_target is not None:
+            result={"schema":"competition_grasp_verification/v1","success":False,
+                    "navigation_permitted":False,
+                    "reason":"showcase_target_has_no_sensor_verification",
+                    "verification_failure_class":"perception"}
+        else:
+            try:
+                evidence=_capture_feedback(args.feedback_adapter,args.target_json,args.feedback_json,
+                                           empty_closed=empty_closed,gripper=gripper_feedback,
+                                           timeout_sec=args.feedback_timeout_sec)
+                result=GraspVerifier(empty_closed).verify(pen_height_over_table_m=None,
+                    original_roi_has_pen=evidence["roi_pen_last3"],gripper_feedback=gripper_feedback)
+                result["feedback_evidence"]=evidence
+                result["verification_failure_class"]=(None if result.get("success")
+                                                       else "object_absent")
+            except (RuntimeError,OSError,TypeError,ValueError) as exc:
+                result={"schema":"competition_grasp_verification/v1","success":False,
+                        "navigation_permitted":False,"reason":str(exc),
+                        "verification_failure_class":"perception"}
+        result.update({"trace":trace,"motion_completed":motion_completed,
+                       "transport_pose_reached":transport_pose_reached,
+                       "hardware_ok":hardware_ok,
+                       "object_grasp_verified":result.get("success") is True,
+                       "commands_emitted":commands_emitted})
+    except (ImportError,RuntimeError,OSError,TypeError,ValueError,json.JSONDecodeError) as exc:
         result={"schema":"competition_grasp_verification/v1","success":False,
-                "navigation_permitted":False,"reason":str(exc)}
+                "navigation_permitted":False,"reason":str(exc),
+                "verification_failure_class":"hardware",
+                "motion_completed":motion_completed,
+                "transport_pose_reached":transport_pose_reached,
+                "hardware_ok":False,"object_grasp_verified":False,
+                "commands_emitted":commands_emitted,"trace":trace}
     if args.result_json:
         args.result_json.parent.mkdir(parents=True,exist_ok=True)
         args.result_json.write_text(json.dumps(result,indent=2)+"\n",encoding="utf-8")
