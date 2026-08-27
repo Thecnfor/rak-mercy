@@ -196,6 +196,9 @@ def test_healthy_plane_rejection_cannot_be_normalized_as_recoverable_perception(
         "competition_target_failed:rc=4:target JSON malformed",
         "competition_target_failed:rc=4:ROS 2 Python unavailable",
         "competition_target_node_exited:force_fixed_target_parameter_environment_mismatch",
+        "competition_target_node_exited:projector_path_missing",
+        "competition_target_node_exited:projector_must_be_mapping",
+        "competition_target_node_exited:projector_calibration_convex_hull_invalid",
         "competition_target_failed:rc=3:unknown_target_error",
     ],
 )

@@ -53,6 +53,8 @@ def runtime_perception_failure_code(reason: str) -> str:
         return "target_configuration_or_contract"
     if "runtime_vision_launch_exited" in value:
         return "runtime_camera_exit"
+    if "competition_target_node_exited" in value:
+        return "target_node_exit"
     if "timeout" in value or "rc=2" in value:
         return "target_timeout"
     if any(token in value for token in (
