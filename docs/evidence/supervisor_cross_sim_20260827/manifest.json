@@ -1,0 +1,74 @@
+{
+  "schema": "x1_65cm_supervisor_cross_sim/v1",
+  "date_utc": "2026-08-27",
+  "mission_sha256": "e240962558021113f230807b5d60987fbb83107b715b25ca895226dc3fc2db30",
+  "source_heads": {
+    "production_base": "5b149e8b2834d328f6844e116a12c44004a19ae7",
+    "integration": "a18cefd471caf449d7d40d4107443aa2b0a7fe5b",
+    "simulation": "a836b2ad4dac4b4fb4fced2f3aa20bc4b76fd7bd",
+    "cross_sim_merge_before_report": "3fa73e4de9051f6d2f0f153f60955fd3c215fd54"
+  },
+  "results": {
+    "merged_pytest": {
+      "passed": 447,
+      "failed": 0,
+      "duration_sec": 17.82,
+      "tier": "A"
+    },
+    "isaac_physics": {
+      "accepted": true,
+      "physics_hz": 60.0,
+      "controller_dt_sec": 0.016666666666666666,
+      "simulation_time_before_sec": 0.3333333507180214,
+      "simulation_time_after_sec": 2.3333334550261497,
+      "ros_domain_id": 46,
+      "real_devices": [],
+      "tier": "B_components"
+    },
+    "fullchain": {
+      "accepted": true,
+      "classification": "C_synthetic_fixture_and_attachment",
+      "single_pen": true,
+      "table_height_m": 0.65,
+      "pen_lift_mm": 60.0,
+      "placed_at_table_2": true,
+      "synthetic_attachment": true,
+      "contact_grasp_validated": false,
+      "live_vision_validated": false
+    },
+    "fault_matrix": {
+      "accepted": true,
+      "case_count": 11,
+      "retry_count": 0
+    }
+  },
+  "artifacts": [
+    {
+      "path": "/var/workspace/temp/x1-65cm-supervisor/cross-sim-a18cefd/logs/fixture_fault_matrix_20260827T163627Z.json",
+      "sha256": "9028ee01d465f132aca1d4d3b739731bc745035d8b5888cecee29b85a3193e52"
+    },
+    {
+      "path": "/var/workspace/temp/x1-65cm-supervisor/cross-sim-a18cefd/logs/physics_runtime_20260827T163627Z.json",
+      "sha256": "9683862dfbc454d67f32a6111521782a1241a5bdc5e81cca2f674c8b1d2ad75d"
+    },
+    {
+      "path": "/var/workspace/temp/x1-65cm-supervisor/cross-sim-a18cefd/logs/isaac_20260827T163627Z.log",
+      "sha256": "0d244738325ab0a41ce4bc394feb8a07db57689b47e2686b4b144b3213256a76"
+    },
+    {
+      "path": "/var/workspace/temp/x1-65cm-supervisor/cross-sim-a18cefd/artifacts/team_rak_v5_65cm_single_pen_override.usda",
+      "sha256": "3e7b60965c737ca76c843d0f31091003acb6071621fe87fad7f3ef1c8d65104e"
+    },
+    {
+      "path": "/var/workspace/temp/x1-65cm-supervisor/cross-sim-a18cefd/artifacts/team_rak_v5_65cm_single_pen_override.manifest.json",
+      "sha256": "6abdb88af576c539ba0aa62db08b3eb2ea186d3bf6d0a69e88e274bb0fdcfcd4"
+    }
+  ],
+  "release_decision": "mergeable_for_independent_release_with_tier_D_field_unlocks",
+  "tier_D_remaining": [
+    "Positive conservative collision-clearance evidence and reviewed profile",
+    "Jetson OpenCV/CUDA/TensorRT/ROS topic validation",
+    "Venue PnP recalibration or explicit fixed-marker degraded operation",
+    "One real Mercury navigation-pick-verify-navigation-place trace"
+  ]
+}
