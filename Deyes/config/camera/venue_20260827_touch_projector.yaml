@@ -1,0 +1,254 @@
+schema: venue_touch_projector/v1
+coordinate_frame: right_arm_sdk
+matrix_direction: camera_from_right_arm_sdk
+publishes_tf: false
+is_base_link_hand_eye: false
+warning: Fixed-head venue projector only; never publish as TF or call it base_link
+  hand-eye.
+usable: false
+failed_gates:
+- reprojection_rms_px_lte_4
+degraded_fallback: When unusable, do not project pixels; retain explicit fixed right_arm_sdk
+  XY behavior.
+selected_candidate: ITERATIVE
+camera_from_right_arm_sdk:
+  units: metres
+  matrix:
+  - - -0.4590420817991551
+    - 0.8775154863897258
+    - 0.13873333515669828
+    - 0.11627172547619426
+  - - 0.40247596655874196
+    - 0.0661926924472167
+    - 0.9130342949797641
+    - -0.16092917682611482
+  - - 0.7920186004634641
+    - 0.47495799668264493
+    - -0.3835641248958308
+    - 0.03257249391522559
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+right_arm_sdk_from_camera:
+  units: metres
+  matrix:
+  - - -0.45904208179915534
+    - 0.4024759665587418
+    - 0.792018600463464
+    - 0.09234571986322367
+  - - 0.8775154863897258
+    - 0.06619269244721643
+    - 0.4749579966826447
+    - -0.10684847068411371
+  - - 0.13873333515669814
+    - 0.913034294979764
+    - -0.3835641248958309
+    - 0.14329673336963733
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+camera:
+  input: left_rectified_640x360
+  projection_source: Deyes/config/camera/venue_20260827_quick_stereo.yaml
+  P1:
+  - - 441.1782700260487
+    - 0.0
+    - 325.1263618469238
+    - 0.0
+  - - 0.0
+    - 441.1782700260487
+    - 180.0132293701172
+    - 0.0
+  - - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+  distortion:
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+  - 0.0
+head_angles_deg:
+  joint_11: -54.93
+  joint_12: 2.63
+fixed_tool_pose_right_arm_sdk:
+  z_m: 0.045
+  rpy_deg_median:
+  - 179.99
+  - -11.99
+  - -59.99
+  observed_rpy_deg_max_range:
+  - 0.010000000000019327
+  - 0.009999999999999787
+  - 0.00999999999999801
+camera_from_right_arm_sdk_euler_xyz_deg:
+- 128.9234699299995
+- -52.37455500966118
+- 138.7565716734635
+workspace_xyz_m:
+- - 0.35
+  - 0.45
+- - -0.06
+  - 0.16
+- - 0.045
+  - 0.045
+calibration_convex_hull_xy_m:
+- - 0.37989999999999996
+  - 0.09
+- - 0.38989999999999997
+  - -0.0349
+- - 0.4099
+  - -0.0349
+- - 0.3999
+  - 0.08990000000000001
+- - 0.38989999999999997
+  - 0.138
+metrics:
+  point_count: 6
+  reprojection_errors_px:
+  - 4.286977765266584
+  - 1.877739290570232
+  - 4.618684940172012
+  - 2.4892895863539692
+  - 5.446704991393031
+  - 5.1306870584873785
+  reprojection_rms_px: 4.191726799699995
+  reprojection_p95_px: 5.367700508166618
+  loo_base_xy_errors_mm:
+  - 6.726006135520789
+  - 9.408708333334037
+  - 10.835022396288641
+  - 13.492823978828971
+  - 24.787717754296818
+  - 15.442912929527099
+  loo_base_xy_rms_mm: 14.640875836188831
+  loo_base_xy_p95_mm: 22.451516548104387
+  all_points_positive_camera_depth: true
+  minimum_camera_depth_m: 0.3075441265313935
+gates:
+  six_points_non_collinear: true
+  reprojection_rms_px_lte_4: false
+  reprojection_p95_px_lte_6: true
+  loo_base_xy_rms_mm_lte_15: true
+  loo_base_xy_p95_mm_lte_25: true
+  all_points_positive_camera_depth: true
+  mm_to_m_sanity: true
+thresholds:
+  reprojection_rms_px_max: 4.0
+  reprojection_p95_px_max: 6.0
+  loo_base_xy_rms_mm_max: 15.0
+  loo_base_xy_p95_mm_max: 25.0
+candidates:
+- method: IPPE[0]
+  camera_from_right_arm_sdk:
+  - - -0.2676891080147934
+    - 0.9602968372590108
+    - 0.07856542369633879
+    - 0.03609747604455342
+  - - 0.4067239727483085
+    - 0.038703124818765144
+    - 0.9127308903072671
+    - -0.1591000738677928
+  - - 0.8734518598309111
+    - 0.2762825591303297
+    - -0.4009361496277411
+    - 0.028514975388698238
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  positive_depth: true
+  minimum_camera_depth_m: 0.34138946748987364
+  reprojection_errors_px:
+  - 2.72885030868941
+  - 3.0067987391869617
+  - 6.50216440689523
+  - 3.253195026349228
+  - 8.530280691340185
+  - 4.551963835780441
+  reprojection_rms_px: 5.209525665456074
+  reprojection_p95_px: 8.023251620228946
+- method: IPPE[1]
+  camera_from_right_arm_sdk:
+  - - -0.19018677589511845
+    - 0.9802548454568136
+    - -0.05412419267812074
+    - 0.007149729036524447
+  - - 0.18566658272310793
+    - -0.018222455117272496
+    - -0.982443821391036
+    - 0.015050132049649625
+  - - -0.9640315919795072
+    - -0.19689687678563428
+    - -0.1785348973660874
+    - 0.757696235197838
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  positive_depth: true
+  minimum_camera_depth_m: 0.3464449019607307
+  reprojection_errors_px:
+  - 9.185802093395237
+  - 1.5259765104617184
+  - 11.711921382704997
+  - 7.217373694006425
+  - 15.19072241170084
+  - 4.79579451405689
+  reprojection_rms_px: 9.396141427322814
+  reprojection_p95_px: 14.321022154451878
+- method: ITERATIVE
+  camera_from_right_arm_sdk:
+  - - -0.4590420817991551
+    - 0.8775154863897258
+    - 0.13873333515669828
+    - 0.11627172547619426
+  - - 0.40247596655874196
+    - 0.0661926924472167
+    - 0.9130342949797641
+    - -0.16092917682611482
+  - - 0.7920186004634641
+    - 0.47495799668264493
+    - -0.3835641248958308
+    - 0.03257249391522559
+  - - 0.0
+    - 0.0
+    - 0.0
+    - 1.0
+  positive_depth: true
+  minimum_camera_depth_m: 0.3075441265313935
+  reprojection_errors_px:
+  - 4.286977765266584
+  - 1.877739290570232
+  - 4.618684940172012
+  - 2.4892895863539692
+  - 5.446704991393031
+  - 5.1306870584873785
+  reprojection_rms_px: 4.191726799699995
+  reprojection_p95_px: 5.367700508166618
+sources:
+  annotations:
+    path: Deyes/config/camera/venue_20260827_touch_annotations.json
+    sha256: 1bb6054c7f5eeb269a830a9f84bc3f420ee02b7f53c62c64daf9e01bac5badeb
+  records:
+    path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/touch6/records.json
+    sha256: 6b2951ac183b126ce1641169df6d619cbe517ba686fb644c510a8e2af33eb92d
+  stereo:
+    path: Deyes/config/camera/venue_20260827_quick_stereo.yaml
+    sha256: 799550c35e88adb15c468220011990efdecc8fb9270975e31f8cfaf14095ae7f
+  images:
+  - image: touch_00.jpg
+    sha256: ec42c88fff7e48073d3b3dd37e68f0c580b2fa38ec64b7f4e6c70025f72e7f3c
+  - image: touch_01.jpg
+    sha256: e0297e825c7a638d4668a777e47aaeb2ffbd255470261c2bc80b85fad22e67df
+  - image: touch_03.jpg
+    sha256: c50be360d6551e0c2c23c85ba9f41eb08b98a70c2be8aefaebabb34760c34551
+  - image: touch_04.jpg
+    sha256: a979c755558a78af5aaad13914f7d219af771f5ee68a5fca1202c9099332e88e
+  - image: touch_05.jpg
+    sha256: ffe15b39902f0aae50956d81ca0106e76dada2812c54bd630b92a198f5083c54
+  - image: touch_06.jpg
+    sha256: 1f8106a442b1f6af40a5e46584f42105a50b6755d5ec2e006b7639d66a15fc59

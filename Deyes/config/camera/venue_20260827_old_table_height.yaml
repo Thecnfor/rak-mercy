@@ -1,0 +1,150 @@
+schema: venue_ground_height_evidence/v1
+coordinate_contract: camera_relative_parallel_table_height_evidence_only
+trusted_for_grasp: false
+source_frame_count: 5
+projection:
+  P1:
+  - - 441.1782700260487
+    - 0.0
+    - 325.1263618469238
+    - 0.0
+  - - 0.0
+    - 441.1782700260487
+    - 180.0132293701172
+    - 0.0
+  - - 0.0
+    - 0.0
+    - 1.0
+    - 0.0
+  sha256: 799550c35e88adb15c468220011990efdecc8fb9270975e31f8cfaf14095ae7f
+fit_parameters:
+  depth_shape:
+  - 360
+  - 640
+  depth_units: metres
+  sample_step: 2
+  min_depth_m: 0.2
+  max_depth_m: 1.5
+  max_points: 6000
+  ransac_distance_threshold_m: 0.02
+  ransac_iterations: 120
+  seed: first_32_bits_of_each_source_sha256
+unified_plane_normal_camera:
+- -0.09194158969242759
+- 0.33258031364708074
+- 0.9385824838868658
+old_table:
+  height_mm: 560.0
+  plane_distances_camera_m:
+  - 0.5591500066721274
+  - 0.5598717097710696
+  - 0.5600001897094462
+  - 0.5593411226412944
+  - 0.5594289245273323
+  plane_distance_median_m: 0.5594289245273323
+  plane_distance_mad_m: 0.000278917855204841
+new_table_expectation:
+  height_mm: 650.0
+  height_delta_mm: 90.0
+  expected_plane_distance_camera_m: 0.4694289245273323
+  relationship: expected_distance = old_median_distance - (650mm - 560mm) / 1000
+  assumptions:
+  - camera and head pose unchanged
+  - old and new tabletops parallel and horizontal
+  - 650mm tabletop is 90mm closer along the table normal
+frames:
+- path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/depth_m.npy
+  sha256: d9f067435c79754d9e6774ae298ed9237a4be6d73e2b56a54fb105fea3fa8573
+  valid_depth_fraction: 0.12378472222222223
+  independent_plane_normal_camera:
+  - -0.07461987534523563
+  - 0.32518727841209666
+  - 0.9427009643372575
+  independent_plane_center_camera_m:
+  - -0.017289292316918267
+  - -0.012706700202817152
+  - 0.5990950839621513
+  independent_plane_distance_camera_m: 0.5619255809617735
+  inlier_count: 2641
+  inlier_ratio: 0.44016666666666665
+  residual_rms_m: 0.005666371422428997
+  residual_p95_m: 0.01138802251554627
+  unified_plane_distance_camera_m: 0.5591500066721274
+  unified_plane_residual_median_m: 0.003690245193181396
+  unified_plane_residual_p95_m: 0.012019228448853392
+- path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/current/result_depth_f32.bin
+  sha256: fcea89e49ac711cee52000615e0f99a507fb3f222fd637f708e37a974b5e34a9
+  valid_depth_fraction: 0.1530512152777778
+  independent_plane_normal_camera:
+  - -0.10311712701216984
+  - 0.31151274092326403
+  - 0.9446304411563452
+  independent_plane_center_camera_m:
+  - -0.009507430095660447
+  - -0.026818708329935673
+  - 0.606196831384622
+  independent_plane_distance_camera_m: 0.5652579897952879
+  inlier_count: 2127
+  inlier_ratio: 0.3545
+  residual_rms_m: 0.007259002959071177
+  residual_p95_m: 0.014936903586915318
+  unified_plane_distance_camera_m: 0.5598717097710696
+  unified_plane_residual_median_m: 0.004282360696000298
+  unified_plane_residual_p95_m: 0.015820020484843527
+- path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/pen_replaced/result_depth_f32.bin
+  sha256: 6648c89a7c7a45af77af23aaf49dd4aea7978eff7cdf470dce32c0245a4369a7
+  valid_depth_fraction: 0.15340277777777778
+  independent_plane_normal_camera:
+  - -0.04866559306821445
+  - 0.3481717724487342
+  - 0.9361666929138346
+  independent_plane_center_camera_m:
+  - -0.018503395537772114
+  - -0.028428857638741832
+  - 0.6056024454931084
+  independent_plane_distance_camera_m: 0.557947191582662
+  inlier_count: 2083
+  inlier_ratio: 0.3471666666666667
+  residual_rms_m: 0.006497583721539856
+  residual_p95_m: 0.014029468655920726
+  unified_plane_distance_camera_m: 0.5600001897094462
+  unified_plane_residual_median_m: 0.00426971404614418
+  unified_plane_residual_p95_m: 0.015399775607478672
+- path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/z70/result_depth_f32.bin
+  sha256: f01f8f57beb3813644ca6c2ce250d593678c0643b94a3b1d893021671d642bd8
+  valid_depth_fraction: 0.16434027777777777
+  independent_plane_normal_camera:
+  - -0.11033898866341832
+  - 0.4042973801567331
+  - 0.9079476504618181
+  independent_plane_center_camera_m:
+  - -0.01258663799173419
+  - -0.029138456618802048
+  - 0.6059395503194839
+  independent_plane_distance_camera_m: 0.5397695862683543
+  inlier_count: 1930
+  inlier_ratio: 0.32166666666666666
+  residual_rms_m: 0.008289286697483536
+  residual_p95_m: 0.016224294546474283
+  unified_plane_distance_camera_m: 0.5593411226412944
+  unified_plane_residual_median_m: 0.004411994149189413
+  unified_plane_residual_p95_m: 0.017010179704459737
+- path: E:/a_robot/temp/deyes/venue_sync_20260827_200517/temp/deyes/live_level/z70_ry16/result_depth_f32.bin
+  sha256: c4d1b4854f38346800b549d985f1050453e8f4b6a20601af3ca7e8e648c3b208
+  valid_depth_fraction: 0.15159722222222222
+  independent_plane_normal_camera:
+  - -0.09194158969242759
+  - 0.33258031364708074
+  - 0.9385824838868658
+  independent_plane_center_camera_m:
+  - -0.012249977181807495
+  - -0.0280245761123944
+  - 0.6057853714508169
+  independent_plane_distance_camera_m: 0.5603853987011401
+  inlier_count: 2040
+  inlier_ratio: 0.34
+  residual_rms_m: 0.007199464740577101
+  residual_p95_m: 0.01538828876289781
+  unified_plane_distance_camera_m: 0.5594289245273323
+  unified_plane_residual_median_m: 0.004303568829267579
+  unified_plane_residual_p95_m: 0.01601245116508704

@@ -1,0 +1,26 @@
+{
+  "schema": "venue_touch_annotations/v1",
+  "reviewed_utc_date": "2026-08-27",
+  "camera_input": "left_rectified_640x360",
+  "camera_input_provenance": "Capture metadata did not preserve a topic name. Manual review found the same rectified-left geometry/FOV as the venue P1 stream; this remains an evidence limitation, not a validated claim.",
+  "physical_feature": "camera-visible upper jaw, outermost contact corner",
+  "selection_rule": "The same physical upper-jaw outer corner was selected in every image. The adjacent diagonal silver/black object is the pen and was never annotated.",
+  "fixed_z_plane_right_arm_sdk_mm": 45.0,
+  "records_sha256": "6b2951ac183b126ce1641169df6d619cbe517ba686fb644c510a8e2af33eb92d",
+  "source_images": [
+    {"image": "touch_00.jpg", "sha256": "ec42c88fff7e48073d3b3dd37e68f0c580b2fa38ec64b7f4e6c70025f72e7f3c"},
+    {"image": "touch_01.jpg", "sha256": "e0297e825c7a638d4668a777e47aaeb2ffbd255470261c2bc80b85fad22e67df"},
+    {"image": "touch_03.jpg", "sha256": "c50be360d6551e0c2c23c85ba9f41eb08b98a70c2be8aefaebabb34760c34551"},
+    {"image": "touch_04.jpg", "sha256": "a979c755558a78af5aaad13914f7d219af771f5ee68a5fca1202c9099332e88e"},
+    {"image": "touch_05.jpg", "sha256": "ffe15b39902f0aae50956d81ca0106e76dada2812c54bd630b92a198f5083c54"},
+    {"image": "touch_06.jpg", "sha256": "1f8106a442b1f6af40a5e46584f42105a50b6755d5ec2e006b7639d66a15fc59"}
+  ],
+  "annotations": [
+    {"record_index": 0, "image": "touch_00.jpg", "pixel_uv": [196.0, 229.0], "review": "upper jaw corner is partly adjacent to/occluded by pen; corner edge remains visible"},
+    {"record_index": 1, "image": "touch_01.jpg", "pixel_uv": [195.0, 237.0], "review": "same upper jaw outer corner"},
+    {"record_index": 3, "image": "touch_03.jpg", "pixel_uv": [285.0, 237.0], "review": "same upper jaw outer corner against checkerboard"},
+    {"record_index": 4, "image": "touch_04.jpg", "pixel_uv": [357.0, 230.0], "review": "same upper jaw outer corner"},
+    {"record_index": 5, "image": "touch_05.jpg", "pixel_uv": [394.0, 229.0], "review": "same upper jaw outer corner"},
+    {"record_index": 6, "image": "touch_06.jpg", "pixel_uv": [351.0, 237.0], "review": "same upper jaw outer corner"}
+  ]
+}
