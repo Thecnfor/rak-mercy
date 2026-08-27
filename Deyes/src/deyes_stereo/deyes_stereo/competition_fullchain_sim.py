@@ -112,6 +112,15 @@ class CompetitionFullChain:
             )
             success = outcome.pop("success", False) is True
             reason = str(outcome.pop("reason", "ok" if success else "phase_failed"))
+            if phase == "verify_grasp" and success:
+                verification = outcome.get("grasp_verification")
+                if (
+                    not isinstance(verification, Mapping)
+                    or verification.get("success") is not True
+                    or verification.get("navigation_permitted") is not True
+                ):
+                    success = False
+                    reason = "grasp_not_verified"
             event = {
                 "phase": phase,
                 "attempt": 1,

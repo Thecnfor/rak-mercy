@@ -9,6 +9,7 @@ drivers and refuses to start when a known real-arm device is present.
 """
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import math
@@ -22,6 +23,12 @@ FIXED_PHYSICS_DT_SEC = 1.0 / 60.0
 DEFAULT_BASE_ADAPTER = Path(
     "/var/workspace/docker/isaac/safe_tools/isolated_scene_adapter.py"
 )
+SAFE_BASE_ADAPTER_SHA256 = (
+    "cec8099a4feeecc4dcee7dfd91d0524c11c131171d520b60642c3e20af5ee060"
+)
+TABLE_2_PLACE_WORLD_M = (2.87, 0.14, 0.668)
+TABLE_2_PLACE_XY_TOLERANCE_M = 0.030
+TABLE_2_PLACE_Z_TOLERANCE_M = 0.030
 REAL_DEVICE_PREFIXES = (
     "/dev/right_arm",
     "/dev/left_arm",
@@ -103,6 +110,13 @@ def validate_synthetic_pen_trace(trace: Mapping[str, object]) -> tuple[bool, str
         return False, "pen_trace_invalid"
     if lifted[2] - initial[2] < 0.030:
         return False, "pen_lift_below_30mm"
+    if math.hypot(
+        placed[0] - TABLE_2_PLACE_WORLD_M[0],
+        placed[1] - TABLE_2_PLACE_WORLD_M[1],
+    ) > TABLE_2_PLACE_XY_TOLERANCE_M:
+        return False, "pen_place_outside_table_2_fixture"
+    if abs(placed[2] - TABLE_2_PLACE_WORLD_M[2]) > TABLE_2_PLACE_Z_TOLERANCE_M:
+        return False, "pen_place_height_invalid"
     return True, "ok"
 
 
@@ -113,10 +127,29 @@ def _known_device_paths() -> list[str]:
     return sorted(set(paths))
 
 
-def _load_base_adapter():
-    path = Path(os.environ.get("X1_SAFE_BASE_ADAPTER", str(DEFAULT_BASE_ADAPTER)))
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def validate_safe_base_adapter(
+    path: Path, *, expected_sha256: str = SAFE_BASE_ADAPTER_SHA256
+) -> tuple[bool, str]:
     if not path.is_file():
-        raise RuntimeError(f"safe_base_adapter_missing:{path}")
+        return False, "safe_base_adapter_missing"
+    if _sha256(path) != expected_sha256:
+        return False, "safe_base_adapter_sha256_mismatch"
+    return True, "ok"
+
+
+def _load_base_adapter():
+    path = DEFAULT_BASE_ADAPTER.resolve()
+    accepted, reason = validate_safe_base_adapter(path)
+    if not accepted:
+        raise RuntimeError(f"{reason}:{path}")
     spec = importlib.util.spec_from_file_location("x1_safe_base_adapter", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"safe_base_adapter_import_failed:{path}")
@@ -210,7 +243,7 @@ async def configure() -> None:
         for _ in range(30):
             await app.next_update_async()
         lifted_position, _ = pen.get_world_pose()
-        placed_target = np.asarray([2.87, 0.14, 0.668], dtype=float)
+        placed_target = np.asarray(TABLE_2_PLACE_WORLD_M, dtype=float)
         pen.set_world_pose(position=placed_target, orientation=orientation)
         for _ in range(2):
             await app.next_update_async()
@@ -239,6 +272,8 @@ async def configure() -> None:
     evidence = {
         **preflight,
         "scene_usd": str(base.ARGS.scene_usd),
+        "safe_base_adapter": str(DEFAULT_BASE_ADAPTER),
+        "safe_base_adapter_sha256": SAFE_BASE_ADAPTER_SHA256,
         "timeline_play_requested": True,
         "timeline_playing_after_60_updates": bool(timeline.is_playing()),
         "simulation_time_before_sec": simulation_time_before_sec,

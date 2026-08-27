@@ -115,3 +115,32 @@ def test_fault_catalog_covers_every_fail_closed_injection():
         "grasp_verification_failed",
         "navigation_table_2_failed",
     }
+
+
+def test_unverified_grasp_payload_cannot_reach_table_2_even_if_adapter_marks_phase_success():
+    class UnverifiedAdapter(SimulatedCompetitionAdapter):
+        def perform(self, phase, context, *, force_fixed_target):
+            if phase == "verify_grasp":
+                self.calls.append(phase)
+                return {
+                    "success": True,
+                    "reason": "ok",
+                    "grasp_verification": {
+                        "success": False,
+                        "navigation_permitted": False,
+                        "reason": "grasp_not_verified",
+                    },
+                }
+            return super().perform(
+                phase, context, force_fixed_target=force_fixed_target
+            )
+
+    adapter = UnverifiedAdapter()
+    result = CompetitionFullChain(adapter).run()
+
+    assert result["state"] == "failed"
+    assert result["failed_phase"] == "verify_grasp"
+    assert result["reason"] == "grasp_not_verified"
+    assert "navigate_table_2" not in adapter.calls
+    assert "place" not in adapter.calls
+    assert result["retry_count"] == 0

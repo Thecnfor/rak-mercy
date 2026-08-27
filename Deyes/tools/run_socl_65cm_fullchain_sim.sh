@@ -43,6 +43,32 @@ export LD_LIBRARY_PATH="/home/socl/miniconda3/envs/isaacsim51/lib/python3.11/sit
 
 ISAAC_LOG="${LOG_ROOT}/isaac_${RUN_ID}.log"
 MAX_SECONDS="${X1_ISAAC_TIMEOUT_SEC:-420}"
+ISAAC_PID=""
+
+cleanup_isaac() {
+  if [[ -z "${ISAAC_PID}" ]] || ! kill -0 "${ISAAC_PID}" 2>/dev/null; then
+    return
+  fi
+  kill -INT "${ISAAC_PID}" 2>/dev/null || true
+  for _ in 1 2 3 4 5; do
+    kill -0 "${ISAAC_PID}" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "${ISAAC_PID}" 2>/dev/null; then
+    kill -TERM "${ISAAC_PID}" 2>/dev/null || true
+    for _ in 1 2 3; do
+      kill -0 "${ISAAC_PID}" 2>/dev/null || break
+      sleep 1
+    done
+  fi
+  if kill -0 "${ISAAC_PID}" 2>/dev/null; then
+    kill -KILL "${ISAAC_PID}" 2>/dev/null || true
+  fi
+  wait "${ISAAC_PID}" 2>/dev/null || true
+  ISAAC_PID=""
+}
+trap cleanup_isaac EXIT
+
 echo "Isaac log: ${ISAAC_LOG}"
 echo "Fixture evidence: ${FIXTURE_EVIDENCE}"
 echo "Physics evidence: ${X1_PHYSICS_EVIDENCE_JSON}"
@@ -58,8 +84,6 @@ while kill -0 "${ISAAC_PID}" 2>/dev/null; do
     break
   fi
   if (( SECONDS - START_SECONDS >= MAX_SECONDS )); then
-    kill -INT "${ISAAC_PID}" 2>/dev/null || true
-    wait "${ISAAC_PID}" || true
     tail -n 80 "${ISAAC_LOG}"
     echo "Timed out before physics evidence was written" >&2
     exit 1
@@ -68,7 +92,6 @@ while kill -0 "${ISAAC_PID}" 2>/dev/null; do
 done
 
 if [[ ! -s "${X1_PHYSICS_EVIDENCE_JSON}" ]]; then
-  wait "${ISAAC_PID}" || true
   tail -n 80 "${ISAAC_LOG}"
   echo "Isaac exited before physics evidence was written" >&2
   exit 1
@@ -76,8 +99,7 @@ fi
 
 # Full-kit shutdown can outlive the completed evidence coroutine.  Interrupt
 # this simulation-only process after the JSON is durable; do not retry it.
-kill -INT "${ISAAC_PID}" 2>/dev/null || true
-wait "${ISAAC_PID}" || true
+cleanup_isaac
 
 python3 - "${X1_PHYSICS_EVIDENCE_JSON}" <<'PY'
 import json
