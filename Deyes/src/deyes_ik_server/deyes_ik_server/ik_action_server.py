@@ -62,7 +62,11 @@ class ExecuteCartesianStageActionServer(Node):
         self._solvers: Dict[str, object] = {
             side: _make_solver(solver_type, side) for side in arm_sides
         }
-        self._current_deg: Dict[str, list[float]] = {side: list(IkpySolver7DOF.OBSERVATION_POSE_RIGHT_DEG) for side in arm_sides}
+        # Each arm is 6-DOF in the vendor firmware; joint7 is the fixed
+        # wrist roll and is not in this map.
+        self._current_deg: Dict[str, list[float]] = {
+            side: list(IkpySolver7DOF.OBSERVATION_POSE_RIGHT_DEG) for side in arm_sides
+        }
 
         self.create_subscription(
             JointState,
@@ -92,13 +96,14 @@ class ExecuteCartesianStageActionServer(Node):
 
     def _on_joint_state(self, msg: JointState) -> None:
         """Cache the current joint angles per arm for the next IK seed."""
-        # JointState name order matches URDF joint ordering (joint1_R..joint7_R then joint1_L..joint7_L).
+        # JointState name order matches URDF joint ordering (joint1..joint6 per arm).
+        # joint7 is the fixed wrist roll and never appears here.
         for side, names in arm_joint_names_dict().items():
             angles = []
             for jname in names:
                 if jname in msg.name:
                     angles.append(math.degrees(float(msg.position[msg.name.index(jname)])))
-            if len(angles) == 7:
+            if len(angles) == 6:
                 self._current_deg[side] = angles
 
     # ---- action execute --------------------------------------------
@@ -135,7 +140,7 @@ class ExecuteCartesianStageActionServer(Node):
         out.success = success
         out.failure_code = failure_code
         out.final_pose_base = pose
-        out.final_joint_deg = list(joint_deg) if joint_deg else [0.0] * 7
+        out.final_joint_deg = list(joint_deg) if joint_deg else [0.0] * 6
         return out
 
     def _publish_solution(self, arm_side: str, joint_deg: list[float]) -> None:

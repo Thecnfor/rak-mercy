@@ -16,7 +16,7 @@ from pymycobot import Mercury
 ARM_PORT = "/dev/ttyACM1"
 BAUDRATE = 115200
 
-OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6, 0.0]
+OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6]
 
 TRANSPORT_Z_MM = 350
 LIFT_Z_MM = 350

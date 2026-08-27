@@ -53,23 +53,32 @@ def _ensure_ikpy() -> None:
 # ikpy's Chain.from_urdf_file parses the whole robot, so we filter by the
 # arm's joint names via ``active_links_mask``.
 def _build_active_links_mask(urdf_path: str, side: str) -> list[bool]:
-    """Return a per-link mask that activates only this arm's joints."""
+    """Return a per-link mask that activates only this arm's joints.
+
+    Mercury X1 is 6-DOF per arm in the vendor firmware (joint7_{R,L}
+    is the fixed wrist roll — geometric in the URDF, not actuated).
+    We therefore activate exactly the 6 motorised joints and let the
+    inactive joint7 sit at 0 (its URDF origin offset stays applied).
+    """
     _ensure_ikpy()
     chain = ikpy.chain.Chain.from_urdf_file(urdf_path, last_link_vector=None)
-    joint_names = arm_joint_names(side)
+    arm_names = set(arm_joint_names(side))
     mask: list[bool] = []
     for link in chain.links:
-        # ikpy names inactive links after their parent joint; skip the base
-        if link.name in joint_names:
+        if link.name in arm_names:
             mask.append(True)
-        elif link.name in {"base_link", "base_footprint", "link_body"}:
-            mask.append(False)
         else:
             mask.append(False)
-    if sum(mask) != 7:
-        # Fall back to "first N links are arm joints". Better than crashing
-        # the field if the URDF is updated upstream.
-        return [False] + [True] * 7 + [False] * (len(chain.links) - 8)
+    if sum(mask) != 6:
+        # Fallback: activate the first six arm-named links. Better than
+        # crashing the field if the URDF is updated upstream.
+        active_so_far = 0
+        for link in chain.links:
+            if active_so_far < 6 and link.name not in {"base_link", "base_footprint", "link_body"}:
+                mask.append(True)
+                active_so_far += 1
+            else:
+                mask.append(False)
     return mask
 
 
@@ -139,8 +148,9 @@ class IkpySolver7DOF:
         except Exception as exc:  # pragma: no cover - defensive
             return IkResult(False, [], failure_code=f"IK_RUNTIME_ERROR:{exc}")
 
-        # ikpy returns one angle per chain link. The first link is the base
-        # (inactive in our mask) so the 7 arm joints sit at indices 1..7.
+        # ikpy returns one angle per chain link. Index 0 is the (inactive)
+        # base, indices 1..N_active are the actuated joints, then any
+        # inactive joints at the tail (e.g. joint7 wrist roll on X1).
         active = list(joint_full[1 : 1 + self._n_active])
         # ikpy returns radians; Action contract and pymycobot expect degrees.
         joint_deg = [math.degrees(float(v)) for v in active]
@@ -162,15 +172,17 @@ class IkpySolver7DOF:
     def _compose_initial_state(self, current_joint_deg: Optional[list[float]]):
         """Build the (chain.length,) initial vector ikpy expects.
 
-        Index 0 is the (fixed) base link, indices 1..7 are the 7 arm joints.
+        Index 0 is the (fixed) base link, indices 1..N_active are the
+        actuated joints; everything after N_active stays 0.
         ikpy uses radian angles throughout.
         """
         state = _np().zeros(self._chain.length)
         seed = current_joint_deg or self._last_joint_deg
         if seed is None:
-            # Reasonable observation pose for Mercury X1 right arm.
-            seed = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6, 0.0]
-        for i in range(self._n_active):
+            # Vendor-probed observation pose for Mercury X1 right arm
+            # (joints 1..6 only — joint7 wrist roll is fixed).
+            seed = self.OBSERVATION_POSE_RIGHT_DEG
+        for i in range(min(self._n_active, len(seed))):
             state[1 + i] = math.radians(float(seed[i]))
         return state
 
@@ -184,4 +196,5 @@ class IkpySolver7DOF:
         return R.from_euler("xyz", euler_xyz_deg, degrees=True).as_quat()  # [x,y,z,w]
 
     # Convenience: vendor-probed observation pose in degrees.
-    OBSERVATION_POSE_RIGHT_DEG = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6, 0.0]
+    # Matches pick_pen_hardcoded.py exactly so IK seed is consistent.
+    OBSERVATION_POSE_RIGHT_DEG = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6]

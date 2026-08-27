@@ -35,13 +35,16 @@ from pymycobot import Mercury
 ARM_PORT = "/dev/ttyACM1"
 BAUDRATE = 115200
 
-# Observation pose probed live on 2026-08-27 venue robot. Joint 3 is
-# clamped to 4.5° because the vendor limit on joint3_R is ~15° and
-# pymycobot rejects values at the boundary.
-OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6, 0.0]
+# Observation pose probed live on 2026-08-27 venue robot. Mercury X1's
+# vendor firmware accepts a 6-element angle list per arm; joint7 is the
+# fixed wrist roll and is not actuated. Joint 3 is clamped to 4.5°
+# because the vendor limit on joint3_R is ~15° and pymycobot rejects
+# values at the boundary.
+OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6]
 
 # Joint limit sanity (from URDF, in degrees) — fail-closed if IK returns
-# something the vendor firmware will refuse.
+# something the vendor firmware will refuse. 6 entries: joint7 is
+# excluded because it is not driven.
 JOINT_LIMIT_DEG = {
     1: (-178.0, 178.0),
     2: (-82.0, 130.0),
@@ -49,7 +52,6 @@ JOINT_LIMIT_DEG = {
     4: (-175.0, 15.0),
     5: (-178.0, 178.0),
     6: (-2.0, 168.0),
-    7: (-178.0, 178.0),
 }
 
 SPEED = 30

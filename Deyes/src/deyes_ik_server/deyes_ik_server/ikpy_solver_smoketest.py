@@ -25,8 +25,8 @@ def main() -> int:
     p.add_argument("--urdf", default=None)
     p.add_argument("--pose", nargs=6, type=float, required=True,
                    metavar=("X_M", "Y_M", "Z_M", "RX_DEG", "RY_DEG", "RZ_DEG"))
-    p.add_argument("--seed", nargs=7, type=float, default=None,
-                   help="optional 7-element joint seed in degrees")
+    p.add_argument("--seed", nargs=6, type=float, default=None,
+                   help="optional 6-element joint seed in degrees")
     args = p.parse_args()
 
     try:

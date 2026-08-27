@@ -37,11 +37,11 @@ class MockSolver:
         if not (self.x_clip[0] <= x <= self.x_clip[1]
                 and self.y_clip[0] <= y <= self.y_clip[1]
                 and self.z_clip[0] <= z <= self.z_clip[1]):
-            return IkResult(False, list(self.observation_pose_deg),
+            return IkResult(False, list(self.observation_pose_deg[:6]),
                             failure_code="MOCK_OUT_OF_BOX")
         # Mock: keep the joint at observation pose but slightly lean toward
         # the target so RViz visualization reflects the goal.
         seed = list(current_joint_deg) if current_joint_deg else list(self.observation_pose_deg)
-        if len(seed) < 7:
-            seed = list(self.observation_pose_deg) + [0.0] * (7 - len(seed))
-        return IkResult(success=True, joint_deg=seed[:7])
+        if len(seed) < 6:
+            seed = list(self.observation_pose_deg) + [0.0] * (6 - len(seed))
+        return IkResult(success=True, joint_deg=seed[:6])

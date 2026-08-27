@@ -43,8 +43,11 @@ def resolve_urdf(extra: Iterable[str] = ()) -> str:
 
 
 ARM_JOINT_NAMES = {
-    "right": ("joint1_R", "joint2_R", "joint3_R", "joint4_R", "joint5_R", "joint6_R", "joint7_R"),
-    "left": ("joint1_L", "joint2_L", "joint3_L", "joint4_L", "joint5_L", "joint6_L", "joint7_L"),
+    # Mercury X1 vendor firmware (pymycobot.Mercury.send_angles) accepts a
+    # 6-element list per arm. joint7_{R,L} exists in the URDF but is the
+    # fixed wrist roll and is not actuated — keep it out of the IK chain.
+    "right": ("joint1_R", "joint2_R", "joint3_R", "joint4_R", "joint5_R", "joint6_R"),
+    "left": ("joint1_L", "joint2_L", "joint3_L", "joint4_L", "joint5_L", "joint6_L"),
 }
 
 
