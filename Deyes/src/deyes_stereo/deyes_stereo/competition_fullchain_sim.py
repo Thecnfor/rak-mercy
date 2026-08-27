@@ -29,6 +29,20 @@ PHASES = (
     "retreat",
 )
 
+FAIL_CLOSED_FAULTS = (
+    "navigation_table_1_failed",
+    "stale_frame",
+    "zero_pen",
+    "multiple_pens",
+    "invalid_depth",
+    "table_plane_conflict",
+    "projector_unavailable",
+    "target_out_of_bounds",
+    "ik_failed",
+    "grasp_verification_failed",
+    "navigation_table_2_failed",
+)
+
 
 class CompetitionAdapter(Protocol):
     """One deep simulation seam: perform an observable competition phase."""
@@ -169,7 +183,7 @@ class SimulatedCompetitionAdapter:
             "stabilize_table_1": lambda: {"stability": {"duration_sec": 0.5, "linear_speed_mps": 0.0, "angular_speed_radps": 0.0}},
             "stereo_snapshot": lambda: {"snapshot": {"stamp_ns": 1_787_842_935_000_000_000, "source": "synthetic_fixture", "rgb_synthetic": True, "stereo_pair_exact": True, "fresh": True}},
             "cuda_depth_camera_info": lambda: {"perception": {"depth_backend": "synthetic_metric_depth_fixture", "camera_info_corrected": True, "stamp_match": True, "depth_valid": True}},
-            "table_plane_audit": lambda: {"plane_audit": {"state": "fixed_height_verified", "expected_distance_m": 0.469428925, "measured_distance_m": 0.469428925, "residual_rms_m": 0.002}},
+            "table_plane_audit": self._plane_audit,
             "single_pen_detection": lambda: {"detection": {"backend": "synthetic_yolo_contract_fixture", "candidate_count": 1, "selection": "pen_feature_midpoint", "not_visual_measurement": True}},
             "project_target": self._projected_target,
             "validate_ik": lambda: {"trajectory": {"transport": {"pose_mm_deg": [300.0, 10.0, 260.0, 179.99, -12.0, 0.0], "six_axis": True, "position_residual_mm": 0.001, "joint_limits_passed": True, "minimum_clearance_mm": 50.0}}},
@@ -197,6 +211,35 @@ class SimulatedCompetitionAdapter:
             "navigation_table_2_failed": "navigation_table_2_failed",
         }
         return _failure(reasons.get(self.fault, "injected_failure"))
+
+    def _plane_audit(self) -> Mapping[str, Any]:
+        if self.fault == "plane_missing":
+            return {
+                "plane_audit": {
+                    "state": "fixed_height_unverified",
+                    "warning": "plane_missing_using_fixed_650mm",
+                    "expected_distance_m": 0.469428925,
+                    "measured_distance_m": None,
+                }
+            }
+        if self.fault == "plane_low_quality":
+            return {
+                "plane_audit": {
+                    "state": "fixed_height_unverified",
+                    "warning": "plane_low_quality_using_fixed_650mm",
+                    "expected_distance_m": 0.469428925,
+                    "measured_distance_m": 0.471,
+                    "residual_rms_m": 0.030,
+                }
+            }
+        return {
+            "plane_audit": {
+                "state": "fixed_height_verified",
+                "expected_distance_m": 0.469428925,
+                "measured_distance_m": 0.469428925,
+                "residual_rms_m": 0.002,
+            }
+        }
 
     @staticmethod
     def _projected_target() -> Mapping[str, Any]:
