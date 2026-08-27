@@ -34,8 +34,9 @@ The pen pose trace is also tier C.  The v5 asset has no contact grasp
 constraint, so the adapter explicitly disables rigid-body dynamics while the
 pen is synthetically attached, observes z `0.656 -> 0.716 m` (+60 mm), places
 it at `[2.87,0.14,0.668] m`, then re-enables rigid-body dynamics.  This passes
-the 30 mm state-machine gate and the table-2 XY/Z fixture bounds, but is not a
-contact-driven grasp.  The orchestrator independently requires both
+the 30 mm state-machine gate, waits 30 physics updates after release, and
+checks the table-2 XY/Z fixture bounds, but is not a contact-driven grasp.  The
+orchestrator independently requires both
 `grasp_verification.success=true` and `navigation_permitted=true`; an adapter
 cannot reach table 2 merely by marking the verification phase successful.
 
@@ -83,8 +84,9 @@ update frames before opening the stage and makes the one-key wrapper watch a
 fresh, run-specific evidence file, interrupt exactly that simulation process,
 and never retry a competition action.  No further Isaac relaunch is required.
 The subsequent review hardening pins the external safe adapter SHA, validates
-table-2 place bounds and adds bounded PID cleanup; per supervisor direction it
-was checked with unit tests and shell syntax without another Isaac relaunch.
+table-2 place/release bounds and adds bounded PID cleanup; per supervisor
+direction it was checked with unit tests and shell syntax without another
+Isaac relaunch.
 
 ## Tests
 

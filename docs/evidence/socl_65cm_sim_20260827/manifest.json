@@ -3,8 +3,8 @@
   "generated_at": "2026-08-27T15:59:00Z",
   "branch": "feature/socl-65cm-fullchain-sim",
   "production_baseline": "5b149e8",
-  "implementation_commits": ["aeee63b", "e47a827", "24f0c89", "a154103", "9217392"],
-  "reviewed_code_head": "9217392",
+  "implementation_commits": ["aeee63b", "e47a827", "24f0c89", "a154103", "9217392", "eec0b89"],
+  "reviewed_code_head": "eec0b89",
   "overall_fullchain_classification": "C_synthetic_fixture",
   "tier_b_fullchain_passed": false,
   "tier_b_component_observations": {
