@@ -27,7 +27,7 @@ echo "[race_onekey] start: $(date) log=$LOG_DIR"
 
 # ---------------- 杀光旧进程 ----------------
 echo ""
-echo "[1/5] Kill all old ROS"
+echo "[1/5] Kill all old ROS (incl. zombies)"
 pkill -9 -f amcl 2>/dev/null
 pkill -9 -f move_base 2>/dev/null
 pkill -9 -f pick_navigation 2>/dev/null
@@ -35,7 +35,13 @@ pkill -9 -f amcl_auto_localize 2>/dev/null
 pkill -9 -f pick_pen_hardcoded 2>/dev/null
 pkill -9 -f place_pen_hardcoded 2>/dev/null
 pkill -9 -f send_mission 2>/dev/null
-sleep 2
+pkill -9 -f send_one_goal 2>/dev/null
+# robot_pose_ekf conflicts with AMCL's TF on some setups
+pkill -9 -f robot_pose_ekf 2>/dev/null
+# Old adapter / set_initial_pose zombies
+pkill -9 -f set_initial_pose 2>/dev/null
+sleep 3
+echo "  remaining amcl procs (should be 0): $(pgrep -f amcl | wc -l)"
 
 # ---------------- 启动导航 ----------------
 echo ""

@@ -32,7 +32,9 @@ ARM_PORT = "/dev/ttyACM1"
 BAUDRATE = 115200
 
 # Joint angles (degrees): safe observation pose — probed live from arm
-OBSERVE_ANGLES = [4.479, 94.999, 5.009, -84.29, 76.824, 92.6]
+# Joint 3 has limit -173..5 — the probed 5.009 is just OVER the limit
+# and pymycobot rejects with MercuryDataException. Use 4.5 to stay safe.
+OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6]
 
 # Vertical descent values (mm): Mercury uses send_base_coord(3, z, speed)
 PREGRASP_Z_MM = 200   # 20 cm above pen

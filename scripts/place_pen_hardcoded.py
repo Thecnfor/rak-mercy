@@ -22,7 +22,9 @@ ARM_PORT = "/dev/ttyACM1"
 BAUDRATE = 115200
 
 # Same observation pose as pick — probed live on this robot
-OBSERVE_ANGLES = [4.479, 94.999, 5.009, -84.29, 76.824, 92.6]
+# Joint 3 has limit -173..5 — probed 5.009 is just OVER the limit
+# and pymycobot rejects. Use 4.5 to stay safe.
+OBSERVE_ANGLES = [4.479, 94.999, 4.5, -84.29, 76.824, 92.6]
 
 # Vertical positions (mm)
 TRANSPORT_Z_MM = 350   # carrying height above desk
