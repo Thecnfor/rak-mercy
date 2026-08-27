@@ -1,9 +1,10 @@
 {
   "schema": "socl_65cm_sim_evidence/v1",
-  "generated_at": "2026-08-27T15:45:00Z",
+  "generated_at": "2026-08-27T15:59:00Z",
   "branch": "feature/socl-65cm-fullchain-sim",
   "production_baseline": "5b149e8",
-  "implementation_commits": ["aeee63b", "e47a827"],
+  "implementation_commits": ["aeee63b", "e47a827", "24f0c89", "a154103", "9217392"],
+  "reviewed_code_head": "9217392",
   "overall_fullchain_classification": "C_synthetic_fixture",
   "tier_b_fullchain_passed": false,
   "tier_b_component_observations": {
@@ -27,6 +28,14 @@
     "odom_x_after_m": 0.0029984951572724432,
     "right_arm_goal_rad": [0.2, 0.3, -0.2, -0.3, 0.2, 0.3],
     "right_arm_observed_rad": [0.2002, 0.2997, -0.2002, -0.3011, 0.2, 0.3],
+    "right_gripper_open_goal_rad": [0.6981317008, -0.6981317008, -0.6981317008, 0.6981317008],
+    "right_gripper_open_observed_rad": [0.6705, -0.6333, -0.6977, 0.5531],
+    "right_gripper_close_goal_rad": [0.0, 0.0, 0.0, 0.0],
+    "right_gripper_close_observed_rad": [0.0451, -0.0206, -0.0075, -0.0001],
+    "venue_head_truth_deg": [-54.93, 2.63],
+    "isaac_head_eye_observed_rad": [0.0, 0.0],
+    "isaac_head_mapping_verified": false,
+    "venue_head_pose_applied_in_physics": false,
     "pen_initial_world_m": [3.490000009536743, 0.8399999737739563, 0.656000018119812],
     "pen_lifted_world_m": [3.490000009536743, 0.8399999737739563, 0.7160000205039978],
     "pen_placed_world_m": [2.869999885559082, 0.14000000059604645, 0.6679999828338623],
@@ -40,10 +49,15 @@
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/ros_domain46_actions_final.txt", "sha256": "658321c4e77f3abf7dd524c3e2f66919b86b14cdecf1c93112810fdf559805ea"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/clock_hz_final.txt", "sha256": "625dac46d2cc98e8ac214ed373f87c02d7920532a82ef76c6e14d2583c11ead6"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/camera_image_audit_final.json", "sha256": "747740f3e18f2aac01c77b2266d4d06680518dad0824f259b9603f8469f5f61b"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_cmd_vel_goal.txt", "sha256": "42a92d5d4197a3eca02a00779ad6c4cc848afc24e19645443228ffe640dbbc7c"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_cmd_vel_stop.txt", "sha256": "909c0b3b4893b87d78fef4bf0949fa9dc1f2f078679c99a975ade927eacbc41d"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_odom_before.txt", "sha256": "263ce2c9de8a1af5cdafa8e8c21018f187a050d57df571954998a5f03d8ca011"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_odom_after.txt", "sha256": "4fe81d063025e1001584c0fe1e9786c9eceaac4e05334fd80d7c22c627e9528b"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_arm_goal.txt", "sha256": "481f5aa7e2729c7c38fbab6f2a776e2eff6e51580d4095562c668cb78e585eeb"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_arm_before.txt", "sha256": "ba62e35a1db27e50d08d45e5143bd17ef2d5acb99302387365a2894a123b7712"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_arm_after.txt", "sha256": "52b941f812f0f71009e7403aada7e6c35a1957a50adbd923f2e3bd439c8de1b3"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_gripper_open_goal.txt", "sha256": "45ff7451890037efe1471d3bd66777f56baf04ac2a7d8a0bfaab162392a5695c"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_gripper_close_goal.txt", "sha256": "9a6c65b13085013eafe05774496842989e32e9ecfd632bea4d8b3189aa1f9b43"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_gripper_after_open.txt", "sha256": "1222b9e8fa53f26054f53476f1c76a058b86fb0c5ae56a50a386e19baaf9d383"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/final_v3_gripper_after_close.txt", "sha256": "32fe601e90b3ac7761730985170c23c8e7bd294ef39acf46bd821f6039e25203"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/onekey_selftest_final_stdout.txt", "sha256": "470197e102649ac3840a23fa895e69cfd17de32fa0defeca0c2c701b5810fdb8"},
@@ -51,7 +65,12 @@
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/physics_runtime_20260827T154951Z.json", "sha256": "eb3a99f5dfe763ed478cbbf18fe82f24fbe31eb17b421553a0059ccf02678f55"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/isaac_motion_fixed.log", "sha256": "9e761d9fe94b81e85a95e39e02dbf1feec31292a5322a29dfd00768014be0554", "result": "native_pure_virtual_abort_before_scene_ready"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/onekey_selftest_stdout.txt", "sha256": "16872ed23fea4b62066815d9af1c7f962cd655e0a1245f3a4eb17d10ad0e3c62", "result": "evidence_accepted_then_wrapper_timeout_124"},
+    {"path": "/var/workspace/docker/isaac/safe_tools/isolated_scene_adapter.py", "sha256": "cec8099a4feeecc4dcee7dfd91d0524c11c131171d520b60642c3e20af5ee060", "result": "pinned_external_safe_adapter"},
     {"path": "/var/workspace/temp/x1-65cm-sim/artifacts/team_rak_v5_65cm_single_pen_override.usda", "sha256": "3e7b60965c737ca76c843d0f31091003acb6071621fe87fad7f3ef1c8d65104e"},
     {"path": "/var/workspace/temp/x1-65cm-sim/artifacts/team_rak_v5_65cm_single_pen_override.manifest.json", "sha256": "6abdb88af576c539ba0aa62db08b3eb2ea186d3bf6d0a69e88e274bb0fdcfcd4"}
-  ]
+  ],
+  "test_results": {
+    "focused_simulation": {"passed": 24, "failed": 0},
+    "deyes_aggregate": {"passed": 363, "failed": 2, "baseline_failure": "scripts/race_onekey_try.sh uses missing command py"}
+  }
 }

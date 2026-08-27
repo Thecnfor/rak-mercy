@@ -34,7 +34,16 @@ The pen pose trace is also tier C.  The v5 asset has no contact grasp
 constraint, so the adapter explicitly disables rigid-body dynamics while the
 pen is synthetically attached, observes z `0.656 -> 0.716 m` (+60 mm), places
 it at `[2.87,0.14,0.668] m`, then re-enables rigid-body dynamics.  This passes
-the 30 mm state-machine gate but is not a contact-driven grasp.
+the 30 mm state-machine gate and the table-2 XY/Z fixture bounds, but is not a
+contact-driven grasp.  The orchestrator independently requires both
+`grasp_verification.success=true` and `navigation_permitted=true`; an adapter
+cannot reach table 2 merely by marking the verification phase successful.
+
+The physical head truth `[-54.93,2.63] deg` is retained in the tier-C contract,
+but it was **not applied or verified** in the Isaac physics run.  The v5
+`head`/`eye` joint observations were approximately zero and the mapping from
+those articulation joints to the venue head convention is unverified.  This
+is an explicit remaining asset-adapter gap, not a 65 cm truth change.
 
 ## Fault matrix
 
@@ -73,6 +82,27 @@ because full-kit shutdown stalled.  Commit `24f0c89` yields several Kit-owned
 update frames before opening the stage and makes the one-key wrapper watch a
 fresh, run-specific evidence file, interrupt exactly that simulation process,
 and never retry a competition action.  No further Isaac relaunch is required.
+The subsequent review hardening pins the external safe adapter SHA, validates
+table-2 place bounds and adds bounded PID cleanup; per supervisor direction it
+was checked with unit tests and shell syntax without another Isaac relaunch.
+
+## Tests
+
+```bash
+PYTHONPATH=Deyes:Deyes/tools:Deyes/src/deyes_stereo \
+  pytest -q Deyes/test/test_competition_fullchain_sim.py \
+  Deyes/test/test_isaac_competition_65cm_adapter.py \
+  Deyes/test/test_competition_scene_override.py
+# 24 passed
+
+PYTHONPATH=Deyes:Deyes/tools:Deyes/src/deyes_stereo pytest -q Deyes/test
+# 363 passed, 2 failed
+```
+
+The two aggregate failures are unchanged production-baseline tests:
+`scripts/race_onekey_try.sh` invokes `PYTHON_BIN=py`, while this Linux host has
+`python3` and no `py`.  The script is byte-identical to baseline `5b149e8` and
+is integration-owned; the simulation branch does not patch production deploy.
 
 ## Not passed offline
 
