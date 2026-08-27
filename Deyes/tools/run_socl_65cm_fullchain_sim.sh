@@ -10,6 +10,8 @@ SOURCE_USD="${SOURCE_ROOT}/outputs/team_rak_finals_20260820_dual_arm_transfer_v5
 OVERRIDE_USD="${SIM_ROOT}/artifacts/team_rak_v5_65cm_single_pen_override.usda"
 OVERRIDE_MANIFEST="${SIM_ROOT}/artifacts/team_rak_v5_65cm_single_pen_override.manifest.json"
 LOG_ROOT="${SIM_ROOT}/logs"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+FIXTURE_EVIDENCE="${LOG_ROOT}/fixture_fault_matrix_${RUN_ID}.json"
 
 mkdir -p "${SIM_ROOT}/artifacts" "${LOG_ROOT}/ros-onekey"
 
@@ -21,7 +23,7 @@ python3 "${REPO_ROOT}/Deyes/tools/generate_competition_65cm_scene_override.py" \
 
 PYTHONPATH="${REPO_ROOT}/Deyes/src/deyes_stereo" \
   python3 "${REPO_ROOT}/Deyes/tools/run_competition_65cm_fixture.py" \
-  --output "${LOG_ROOT}/fixture_fault_matrix.json"
+  --output "${FIXTURE_EVIDENCE}"
 
 export OMNI_KIT_ACCEPT_EULA=YES
 export ROS_DOMAIN_ID=46
@@ -36,13 +38,13 @@ export X1_ACKNOWLEDGE_MOTION_RISK=1
 # The v5 scene has no grasp constraint.  This opt-in path is always reported
 # as tier C synthetic attachment even though pen poses are read from PhysX.
 export X1_RUN_SYNTHETIC_PICK_PLACE=1
-RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
 export X1_PHYSICS_EVIDENCE_JSON="${LOG_ROOT}/physics_runtime_${RUN_ID}.json"
 export LD_LIBRARY_PATH="/home/socl/miniconda3/envs/isaacsim51/lib/python3.11/site-packages/isaacsim/exts/isaacsim.ros2.bridge/jazzy/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
 ISAAC_LOG="${LOG_ROOT}/isaac_${RUN_ID}.log"
 MAX_SECONDS="${X1_ISAAC_TIMEOUT_SEC:-420}"
 echo "Isaac log: ${ISAAC_LOG}"
+echo "Fixture evidence: ${FIXTURE_EVIDENCE}"
 echo "Physics evidence: ${X1_PHYSICS_EVIDENCE_JSON}"
 
 /home/socl/miniconda3/envs/isaacsim51/bin/isaacsim \

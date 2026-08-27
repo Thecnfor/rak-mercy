@@ -34,7 +34,7 @@
   },
   "artifacts": [
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/physics_runtime_final_v3.json", "sha256": "eb3a99f5dfe763ed478cbbf18fe82f24fbe31eb17b421553a0059ccf02678f55"},
-    {"path": "/var/workspace/temp/x1-65cm-sim/logs/fixture_fault_matrix.json", "sha256": "7a9f7457f2ed51f8e085b6bd4bf709db519b1883b00e05db38680949f5f1983f"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/fixture_fault_matrix_evidence_20260827.json", "sha256": "ae40b673df045ea7787c2bffce0386af39fa7833c3ae300e798c5497c3ef9f29"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/isaac_motion_final_v3.log", "sha256": "495b33bc968dcb127ea923dadd383d9a693af080bd6687c0ce015705c28fdb09"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/ros_domain46_topics_final.txt", "sha256": "ec129bc7caaa322dcf753e3c674a91062f0dc1a62bd9e1e939d99ea991ab9494"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/ros_domain46_actions_final.txt", "sha256": "658321c4e77f3abf7dd524c3e2f66919b86b14cdecf1c93112810fdf559805ea"},
