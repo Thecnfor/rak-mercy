@@ -18,6 +18,7 @@ RECOVERABLE_SHOWCASE_FAILURES = frozenset(
         "target_timeout",
         "target_zero_objects",
         "target_multiple_objects",
+        "target_zero_or_multiple_objects",
         "exact_stamp_mismatch",
         "depth_invalid",
         "camera_info_invalid",
@@ -45,6 +46,7 @@ def runtime_perception_failure_code(reason: str) -> str:
         return "healthy_plane_deviation_over_25mm"
     if any(token in value for token in (
         "parameter_environment_mismatch",
+        "configuration error",
         "projector_evidence_invalid",
         "venue_profile_schema_invalid",
         "python unavailable",
@@ -57,6 +59,8 @@ def runtime_perception_failure_code(reason: str) -> str:
         return "target_node_exit"
     if "timeout" in value or "rc=2" in value:
         return "target_timeout"
+    if "detection_count_must_be_exactly_one" in value:
+        return "target_zero_or_multiple_objects"
     if any(token in value for token in (
         "zero", "no_eligible", "no_observed", "detection_not_complete",
     )):

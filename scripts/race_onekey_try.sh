@@ -496,22 +496,34 @@ if kill -0 "$VISION_PID" 2>/dev/null; then
     -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
     -p force_fixed_target:="$force_bool" >"$LOG_DIR/competition_target_node.log" 2>&1 & TARGET_PID=$!
   sleep "${TARGET_STARTUP_SEC:-2}"
-  if ! kill -0 "$TARGET_PID" 2>/dev/null; then
-    tail -n 40 "$LOG_DIR/competition_target_node.log" >&2 || true
-    terminate_pid "$TARGET_SNAPSHOT_PID" target_snapshot_adapter
-    TARGET_SNAPSHOT_PID=""
-    target_detail="$(tail -n 1 "$LOG_DIR/competition_target_node.log" 2>/dev/null || true)"
-    select_showcase_target "competition_target_node_exited:${target_detail:-no_detail}"
-  elif wait "$TARGET_SNAPSHOT_PID"; then
-    TARGET_SNAPSHOT_PID=""
-    TARGET_SOURCE="live_competition_target"
-    EXECUTION_TARGET_JSON="$TARGET_JSON"
-    trace "competition_target" "ok" ""
-  else
-    rc=$?; TARGET_SNAPSHOT_PID=""
-    target_detail="$(tail -n 1 "$LOG_DIR/competition_target.log" 2>/dev/null || true)"
-    trace "competition_target" "failed" "rc=$rc detail=$target_detail"
-    select_showcase_target "competition_target_failed:rc=$rc:${target_detail:-no_detail}"
+  snapshot_finished=0
+  if ! kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then
+    snapshot_finished=1
+  elif ! kill -0 "$TARGET_PID" 2>/dev/null; then
+    for _ in $(seq 1 "${TARGET_REJECTION_GRACE_POLLS:-10}"); do
+      if ! kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then snapshot_finished=1; break; fi
+      sleep .1
+    done
+    if [[ "$snapshot_finished" == 0 ]]; then
+      tail -n 40 "$LOG_DIR/competition_target_node.log" >&2 || true
+      terminate_pid "$TARGET_SNAPSHOT_PID" target_snapshot_adapter
+      TARGET_SNAPSHOT_PID=""
+      target_detail="$(tail -n 1 "$LOG_DIR/competition_target_node.log" 2>/dev/null || true)"
+      select_showcase_target "competition_target_node_exited:${target_detail:-no_detail}"
+    fi
+  fi
+  if [[ -n "$TARGET_SNAPSHOT_PID" ]]; then
+    if wait "$TARGET_SNAPSHOT_PID"; then
+      TARGET_SNAPSHOT_PID=""
+      TARGET_SOURCE="live_competition_target"
+      EXECUTION_TARGET_JSON="$TARGET_JSON"
+      trace "competition_target" "ok" ""
+    else
+      rc=$?; TARGET_SNAPSHOT_PID=""
+      target_detail="$(tail -n 1 "$LOG_DIR/competition_target.log" 2>/dev/null || true)"
+      trace "competition_target" "failed" "rc=$rc detail=$target_detail"
+      select_showcase_target "competition_target_failed:rc=$rc:${target_detail:-no_detail}"
+    fi
   fi
 else
   tail -n 60 "$LOG_DIR/vision.log" >&2 || true

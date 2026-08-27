@@ -221,3 +221,11 @@ def test_completed_motion_facts_require_a_real_command_latch() -> None:
         "commands_emitted": False,
     }
     assert decide_pick_continuation(no_command, showcase_enabled=True)["action"] == "stop"
+
+
+def test_real_zero_or_multi_target_reason_is_recoverable_in_showcase_mode() -> None:
+    code = runtime_perception_failure_code(
+        "target rejected: detection_count_must_be_exactly_one"
+    )
+    assert code == "target_zero_or_multiple_objects"
+    assert classify_showcase_failure(code, showcase_enabled=True) == "continue_showcase"

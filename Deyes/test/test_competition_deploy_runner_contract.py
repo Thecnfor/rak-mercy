@@ -87,6 +87,10 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             executable(fake_bin / "roslaunch", "#!/usr/bin/env bash\nexec sleep 30\n")
             executable(fake_bin / "ros2", """#!/usr/bin/env bash
 if [[ "$1" == launch || "$1" == run ]]; then
+  if [[ "$1" == run && "${TARGET_NODE_EXIT_AFTER_REJECTION:-0}" == 1 ]]; then
+    sleep .1
+    exit 3
+  fi
   trap 'exit 0' INT TERM
   while true; do sleep .1; done
 fi
@@ -164,6 +168,36 @@ json.dump({'schema':'competition_place_execution/v1','success':True,'motion_comp
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
                 "goal3_right", "head", "pick_transport", "goal4_back", "place",
             ])
+
+            executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import sys
+print('target rejected: detection_count_must_be_exactly_one',file=sys.stderr)
+raise SystemExit(3)
+""")
+            terminal_rejection_logs = tmp / "terminal-rejection-showcase-logs"
+            events.write_text("", encoding="utf-8")
+            env.update({
+                "LOG_DIR": str(terminal_rejection_logs),
+                "COMPETITION_TRANSACTION_ID": "fixture-terminal-rejection-showcase",
+                "COMPETITION_SHOWCASE_CONTINUE": "1",
+                "TARGET_NODE_EXIT_AFTER_REJECTION": "1",
+                "TARGET_STARTUP_SEC": ".3",
+            })
+            terminal_rejection = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertEqual(terminal_rejection.returncode, 0, terminal_rejection.stderr)
+            terminal_result = json.loads(
+                (terminal_rejection_logs / "transaction_result.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(terminal_result["competition_success"], False)
+            self.assertIs(terminal_result["showcase_complete"], True)
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head", "pick_transport", "goal4_back", "place",
+            ])
+            env.pop("TARGET_NODE_EXIT_AFTER_REJECTION")
+            env["TARGET_STARTUP_SEC"] = "0"
 
             strict_logs = tmp / "strict-logs"
             events.write_text("", encoding="utf-8")
