@@ -1,63 +1,35 @@
 #!/usr/bin/env python3
-"""Fixed-table degraded release after navigation has turned to table two."""
-
+"""650 mm venue release sequence; requires validated transport profile."""
 from __future__ import annotations
+import argparse, json, os, time
+from pathlib import Path
+from deyes_stereo.competition_pick_execution import Mercury650Executor, MotionProfile
 
-import argparse
-import json
-import os
-import time
-
-DEFAULT_PLACE = (400.0, 10.0, 75.0, 179.99, -12.0, 0.0)
-TRANSPORT_ANGLES = (20.0, -10.0, -130.0, -80.0, 73.0, 90.0)
-PORT = os.environ.get("DEGRADED_ARM_PORT", "/dev/right_arm")
-GRIPPER_OPEN = 70
-
-
-def _target() -> tuple[float, ...]:
-    names = ("X", "Y", "Z", "RX", "RY", "RZ")
-    return tuple(float(os.environ.get(f"DEGRADED_PLACE_{name}", value))
-                 for name, value in zip(names, DEFAULT_PLACE))
-
-
-def _wait_pose(robot, expected, timeout=8.0, tol=5.0):
-    deadline = time.monotonic() + timeout
-    last = None
-    while time.monotonic() < deadline:
-        last = robot.get_base_coords()
-        if last and max(abs(float(last[i]) - expected[i]) for i in range(3)) <= tol:
-            return list(last)
-        time.sleep(0.25)
-    raise RuntimeError(f"pose_not_reached expected={expected} actual={last}")
+DEFAULT_PROFILE=Path(os.environ.get("DEGRADED_VENUE_PROFILE","/home/elephant/deyes_competition_assets/competition_venue_65cm.yaml"))
+def _motion_profile(path: Path) -> MotionProfile:
+    try:
+        import yaml
+        transport=yaml.safe_load(path.read_text(encoding="utf-8"))["transport"]
+        validated=(transport.get("transport_validated") is True and transport.get("joint_limits_passed") is True
+                   and float(transport.get("fk_position_residual_mm",float("inf")))<=5.0
+                   and float(transport.get("fk_orientation_residual_deg",float("inf")))<=2.0)
+    except (OSError,KeyError,TypeError,ValueError,AttributeError): validated=False
+    return MotionProfile(transport_validated=validated)
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
-    place = _target()
-    preplace = (place[0], place[1], 110.0, place[3], place[4], place[5])
-    print(json.dumps({"mode": "degraded_fixed_table", "place": place,
-                      "preplace": preplace, "transport": TRANSPORT_ANGLES}))
-    if args.dry_run:
-        return 0
-
+    parser=argparse.ArgumentParser(); parser.add_argument("--x-mm",type=float,default=400.0); parser.add_argument("--y-mm",type=float,default=10.0)
+    parser.add_argument("--venue-profile",type=Path,default=DEFAULT_PROFILE)
+    parser.add_argument("--dry-run",action="store_true"); args=parser.parse_args()
+    profile=_motion_profile(args.venue_profile)
+    plan={"schema":"competition_place_execution/v1","target_xy_mm":[args.x_mm,args.y_mm],"z_sequence_mm":[200,165,200,260],"transport_validated":profile.transport_validated}
+    if args.dry_run: print(json.dumps(plan)); return 0
     from pymycobot import Mercury
-    arm = Mercury(PORT, 115200)
-    if not arm.is_power_on():
-        arm.power_on(); time.sleep(1.5)
-    status = arm.get_robot_status()
-    if not isinstance(status, list) or any(int(v) != 0 for v in status):
-        raise RuntimeError(f"robot_status_not_ok:{status}")
-    arm.send_base_coords(list(preplace), 8); _wait_pose(arm, preplace)
-    arm.send_base_coords(list(place), 6); reached = _wait_pose(arm, place)
-    arm.set_gripper_value(GRIPPER_OPEN, 20); time.sleep(2.0)
-    arm.send_base_coords(list(preplace), 8); _wait_pose(arm, preplace)
-    arm.send_angles(list(TRANSPORT_ANGLES), 8, _async=False)
-    print(json.dumps({"success": True, "release_pose": reached,
-                      "gripper_command": GRIPPER_OPEN}))
-    return 0
+    arm=Mercury(os.environ.get("DEGRADED_ARM_PORT","/dev/right_arm"),115200)
+    if not arm.is_power_on(): arm.power_on(); time.sleep(1.5)
+    try: result={"success":True,"trace":Mercury650Executor(arm,profile).place(args.x_mm,args.y_mm)}
+    except RuntimeError as exc: result={"success":False,"reason":str(exc)}
+    print(json.dumps(result)); return 0 if result["success"] else 2
 
 
-if __name__ == "__main__":
-    raise SystemExit(main())
+if __name__ == "__main__": raise SystemExit(main())

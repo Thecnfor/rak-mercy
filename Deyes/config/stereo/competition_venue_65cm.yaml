@@ -1,0 +1,48 @@
+schema: competition_venue_profile/v1
+calibration_id: quick-motor-sweep-20260827
+table_height_m: 0.650
+reference_table_height_m: 0.560
+reference_plane_distance_m: null
+expected_plane_distance_m: null
+expected_plane_distance_rule: "abs(reference_plane_distance_m) + 0.090"
+touch_plane_z_m: 0.135
+orientation_deg: [179.99, -12.0, 0.0]
+fallbacks:
+  fixed_height: {enabled: true, behavior_when_unverified: fixed_height_unverified, reject_deviation_over_m: 0.025}
+  bbox_center: {enabled: false, edge_margin_px: 12, require_exactly_one_complete_box: true}
+  fixed_xy: {enabled: false, xy_m: [0.400, 0.010]}
+motion:
+  high_z_mm: 235.0
+  pregrasp_z_mm: 180.0
+  approach_z_mm: 140.0
+  contact_z_mm: 135.0
+  lift_z_mm: [180.0, 235.0]
+  place_pre_z_mm: 200.0
+  release_z_mm: 165.0
+  retreat_z_mm: [200.0, 260.0]
+  max_speed: 8
+  terminal_max_speed: 5
+  feedback_xyz_tolerance_mm: 5.0
+  feedback_rpy_tolerance_deg: 2.0
+  timeout_sec: 8.0
+  retry_count: 0
+gripper: {open: 70, closed: 0}
+transport:
+  pose_mm_deg: [300.0, 10.0, 260.0, 179.99, -12.0, 0.0]
+  transport_validated: true
+  validation_reason: official_urdf_6axis_ik_fk_residual_pass
+  official_urdf_path: "mercury_robot_urdf/urdf/mercury_x1/mercury_x1.urdf"
+  ik_frame: link_body
+  ik_tcp_link: link6_R
+  ik_joint_names: [joint1_R, joint2_R, joint3_R, joint4_R, joint5_R, joint6_R]
+  ik_solution_rad: [0.9039235122, 1.0947778287, -0.5541657632, -1.4630624027, 0.5699777942, 1.2977984026]
+  fk_xyz_m: [0.3000000000, 0.0100000000, 0.2600000000]
+  fk_position_residual_mm: 0.00000000006
+  fk_orientation_residual_deg: 0.000000000000002
+  joint_limits_passed: true
+  live_behavior_when_unvalidated: fail_closed
+grasp_verification:
+  lifted_height_over_table_m: 0.030
+  roi_clear_consecutive_frames: 3
+  gripper_feedback_delta_from_empty_closed: 5
+  navigation_on_failure: prohibited
