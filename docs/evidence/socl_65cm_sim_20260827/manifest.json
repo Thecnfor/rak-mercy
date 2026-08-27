@@ -49,6 +49,8 @@
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/onekey_selftest_final_stdout.txt", "sha256": "470197e102649ac3840a23fa895e69cfd17de32fa0defeca0c2c701b5810fdb8"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/isaac_20260827T154951Z.log", "sha256": "e303165601e9a816bf3124c0d97cf24f5596d462a33bc75af959fa7318ed9ddf"},
     {"path": "/var/workspace/temp/x1-65cm-sim/logs/physics_runtime_20260827T154951Z.json", "sha256": "eb3a99f5dfe763ed478cbbf18fe82f24fbe31eb17b421553a0059ccf02678f55"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/isaac_motion_fixed.log", "sha256": "9e761d9fe94b81e85a95e39e02dbf1feec31292a5322a29dfd00768014be0554", "result": "native_pure_virtual_abort_before_scene_ready"},
+    {"path": "/var/workspace/temp/x1-65cm-sim/logs/onekey_selftest_stdout.txt", "sha256": "16872ed23fea4b62066815d9af1c7f962cd655e0a1245f3a4eb17d10ad0e3c62", "result": "evidence_accepted_then_wrapper_timeout_124"},
     {"path": "/var/workspace/temp/x1-65cm-sim/artifacts/team_rak_v5_65cm_single_pen_override.usda", "sha256": "3e7b60965c737ca76c843d0f31091003acb6071621fe87fad7f3ef1c8d65104e"},
     {"path": "/var/workspace/temp/x1-65cm-sim/artifacts/team_rak_v5_65cm_single_pen_override.manifest.json", "sha256": "6abdb88af576c539ba0aa62db08b3eb2ea186d3bf6d0a69e88e274bb0fdcfcd4"}
   ]

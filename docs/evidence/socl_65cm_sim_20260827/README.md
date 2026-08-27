@@ -66,11 +66,22 @@ The final one-key self-test exited 0 in 53 seconds and wrote an accepted
 physics/pen JSON.  Its Isaac log contains no native pure-virtual abort,
 `Invalid deltaTime`, or disabled-rigid-body velocity error.
 
+Startup history is retained rather than hidden: an earlier `--exec` launch
+aborted natively with `pure virtual method called` before the scene was ready,
+and a later run wrote accepted evidence but outlived its 120-second wrapper
+because full-kit shutdown stalled.  Commit `24f0c89` yields several Kit-owned
+update frames before opening the stage and makes the one-key wrapper watch a
+fresh, run-specific evidence file, interrupt exactly that simulation process,
+and never retry a competition action.  No further Isaac relaunch is required.
+
 ## Not passed offline
 
 - No Nav2 action reached either table in Isaac.  The base's contact/slip model
   makes the small odometry response unsuitable for a tier-B navigation claim.
 - No contact-driven pen grasp or release exists in the v5 asset.
+- Isaac's full-kit startup/shutdown path has demonstrated a native race; the
+  successful one-key run is reproducible evidence, not a guarantee that Kit
+  itself can never fail during application bootstrap.
 - Production `competition_pick_target` live exact-stamp vision is owned by the
   integration branch and is not claimed here.  The real venue PnP remains
   `usable:false` at 4.1917 px RMS.
