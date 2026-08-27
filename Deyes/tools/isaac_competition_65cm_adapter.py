@@ -136,6 +136,14 @@ async def configure() -> None:
     preflight = motion_preflight(os.environ, device_paths=_known_device_paths())
     if not preflight["accepted"]:
         raise RuntimeError("motion_preflight_rejected:" + ",".join(preflight["reasons"]))
+    # --exec is evaluated while the full-kit extension graph is still
+    # settling.  Opening the stage in that interval intermittently ends in a
+    # native pure-virtual abort before Python can report an exception.  Yield
+    # to the owned Kit loop first; this is startup stabilization, never a
+    # competition-action retry.
+    app = omni.kit.app.get_app()
+    for _ in range(5):
+        await app.next_update_async()
     base = _load_base_adapter()
     await base.configure()
     stage = omni.usd.get_context().get_stage()
@@ -163,7 +171,6 @@ async def configure() -> None:
         raise RuntimeError("differential_controller_dt_value_invalid")
     timeline = omni.timeline.get_timeline_interface()
     timeline.play()
-    app = omni.kit.app.get_app()
     for _ in range(10):
         await app.next_update_async()
     simulation_time_before_sec = float(SimulationManager.get_simulation_time())
@@ -196,21 +203,21 @@ async def configure() -> None:
         # attachment explicitly by making the rigid body kinematic only while
         # carried; provenance remains tier C and can never be reported as a
         # contact-driven grasp.
-        pen.disable_rigid_body_physics()
-        pen.set_world_pose(position=lifted_target, orientation=orientation)
         pen.set_linear_velocity(np.zeros(3, dtype=float))
         pen.set_angular_velocity(np.zeros(3, dtype=float))
+        pen.disable_rigid_body_physics()
+        pen.set_world_pose(position=lifted_target, orientation=orientation)
         for _ in range(30):
             await app.next_update_async()
         lifted_position, _ = pen.get_world_pose()
         placed_target = np.asarray([2.87, 0.14, 0.668], dtype=float)
         pen.set_world_pose(position=placed_target, orientation=orientation)
-        pen.set_linear_velocity(np.zeros(3, dtype=float))
-        pen.set_angular_velocity(np.zeros(3, dtype=float))
         for _ in range(2):
             await app.next_update_async()
         placed_position, _ = pen.get_world_pose()
         pen.enable_rigid_body_physics()
+        pen.set_linear_velocity(np.zeros(3, dtype=float))
+        pen.set_angular_velocity(np.zeros(3, dtype=float))
         pen_trace = {
             "classification": "C_synthetic_attachment_with_isaac_rigid_body_state",
             "synthetic_attachment": True,

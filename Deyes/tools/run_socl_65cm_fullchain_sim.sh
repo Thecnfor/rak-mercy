@@ -36,12 +36,58 @@ export X1_ACKNOWLEDGE_MOTION_RISK=1
 # The v5 scene has no grasp constraint.  This opt-in path is always reported
 # as tier C synthetic attachment even though pen poses are read from PhysX.
 export X1_RUN_SYNTHETIC_PICK_PLACE=1
-export X1_EXIT_AFTER_EVIDENCE=1
-export X1_PHYSICS_EVIDENCE_JSON="${LOG_ROOT}/physics_runtime.json"
+RUN_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+export X1_PHYSICS_EVIDENCE_JSON="${LOG_ROOT}/physics_runtime_${RUN_ID}.json"
 export LD_LIBRARY_PATH="/home/socl/miniconda3/envs/isaacsim51/lib/python3.11/site-packages/isaacsim/exts/isaacsim.ros2.bridge/jazzy/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 
-timeout "${X1_ISAAC_TIMEOUT_SEC:-420}" \
-  /home/socl/miniconda3/envs/isaacsim51/bin/isaacsim \
+ISAAC_LOG="${LOG_ROOT}/isaac_${RUN_ID}.log"
+MAX_SECONDS="${X1_ISAAC_TIMEOUT_SEC:-420}"
+echo "Isaac log: ${ISAAC_LOG}"
+echo "Physics evidence: ${X1_PHYSICS_EVIDENCE_JSON}"
+
+/home/socl/miniconda3/envs/isaacsim51/bin/isaacsim \
   isaacsim.exp.full.kit --no-window \
   --exec "${REPO_ROOT}/Deyes/tools/isaac_competition_65cm_adapter.py" \
-  2>&1 | tee "${LOG_ROOT}/isaac_onekey.log"
+  >"${ISAAC_LOG}" 2>&1 &
+ISAAC_PID=$!
+START_SECONDS=${SECONDS}
+while kill -0 "${ISAAC_PID}" 2>/dev/null; do
+  if [[ -s "${X1_PHYSICS_EVIDENCE_JSON}" ]]; then
+    break
+  fi
+  if (( SECONDS - START_SECONDS >= MAX_SECONDS )); then
+    kill -INT "${ISAAC_PID}" 2>/dev/null || true
+    wait "${ISAAC_PID}" || true
+    tail -n 80 "${ISAAC_LOG}"
+    echo "Timed out before physics evidence was written" >&2
+    exit 1
+  fi
+  sleep 1
+done
+
+if [[ ! -s "${X1_PHYSICS_EVIDENCE_JSON}" ]]; then
+  wait "${ISAAC_PID}" || true
+  tail -n 80 "${ISAAC_LOG}"
+  echo "Isaac exited before physics evidence was written" >&2
+  exit 1
+fi
+
+# Full-kit shutdown can outlive the completed evidence coroutine.  Interrupt
+# this simulation-only process after the JSON is durable; do not retry it.
+kill -INT "${ISAAC_PID}" 2>/dev/null || true
+wait "${ISAAC_PID}" || true
+
+python3 - "${X1_PHYSICS_EVIDENCE_JSON}" <<'PY'
+import json
+import pathlib
+import sys
+
+evidence = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
+if evidence.get("accepted") is not True or evidence.get("simulation_time_advanced") is not True:
+    raise SystemExit("Isaac physics evidence is not accepted")
+pen = evidence.get("pen_trace")
+if not isinstance(pen, dict) or pen.get("accepted") is not True:
+    raise SystemExit("synthetic pen trace is not accepted")
+print(json.dumps(evidence, indent=2, sort_keys=True))
+PY
+tail -n 25 "${ISAAC_LOG}"
