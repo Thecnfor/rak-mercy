@@ -9,6 +9,8 @@ INFO={"stamp_ns":STAMP,"depth_stamp_ns":STAMP}
 HULL=[[.2,-.2],[.6,-.2],[.6,.2],[.2,.2]]
 
 class Projector:
+    usable=True
+    validated=True
     def ray_for_pixel(self,u,v,info):
         return {"origin_m":[0,0,.5],"direction_unit":[.4,.01,-.365],"predicted_camera_z_m":.7}
 
@@ -17,17 +19,18 @@ def plane(distance, **kw): return {"stamp_ns":STAMP,"valid_for_table_removal":Tr
     "plane_distance_camera_m":distance,"residual_rms_m":.002,**kw}
 
 def test_axis_midpoint_projects_to_fixed_135_without_clamping_and_560_to_650_audit():
-    policy=TargetPolicy(reference_plane_distance_m=.60)
+    assert .559428925-.469428925 == pytest.approx(.650-.560)
+    policy=TargetPolicy(reference_plane_distance_m=.559428925)
     result=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
-        ground_plane=plane(.69),projector=Projector(),touch_hull_xy_m=HULL,policy=policy)
+        ground_plane=plane(.469428925),projector=Projector(),touch_hull_xy_m=HULL,policy=policy)
     assert result["valid"] and result["trusted_for_venue_execution"]
     assert result["selection_source"]=="axis_midpoint" and result["right_arm_sdk_target_m"][2]==.135
     assert result["xy_clamped"] is False and result["height_verification"]=="fixed_height_verified"
 
 def test_healthy_plane_over_25mm_from_reference_plus_90_rejects_but_bad_plane_continues():
-    policy=TargetPolicy(reference_plane_distance_m=.60)
+    policy=TargetPolicy(reference_plane_distance_m=.559428925)
     bad=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
-        ground_plane=plane(.72),projector=Projector(),touch_hull_xy_m=HULL,policy=policy)
+        ground_plane=plane(.50),projector=Projector(),touch_hull_xy_m=HULL,policy=policy)
     assert bad["reason"]=="table_height_deviation_exceeds_25mm"
     poor=plane(.90); poor["residual_rms_m"]=.02
     continued=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
@@ -45,6 +48,8 @@ def test_bbox_fallback_is_separate_requires_margin_and_depth_agreement():
 
 def test_missing_projected_camera_z_and_outside_hull_fail_without_clamp():
     class Missing:
+        usable=True
+        validated=True
         def ray_for_pixel(self,u,v,info): return ([0,0,.5],[.4,.01,-.365])
     missing=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
         ground_plane=None,projector=Missing(),touch_hull_xy_m=HULL)
@@ -52,6 +57,15 @@ def test_missing_projected_camera_z_and_outside_hull_fail_without_clamp():
     outside=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
         ground_plane=None,projector=Projector(),touch_hull_xy_m=[[0,0],[.1,0],[.1,.1],[0,.1]])
     assert outside["reason"]=="target_outside_touch_convex_hull"
+
+def test_projector_must_be_both_usable_and_validated_for_venue_trust():
+    class Unusable(Projector): usable=False
+    class Unvalidated(Projector): validated=False
+    for projector in (Unusable(),Unvalidated()):
+        result=build_competition_pick_target(detection=DETECTION,pen_features=FEATURES,depth_m=depth(),camera_info=INFO,
+            ground_plane=None,projector=projector,touch_hull_xy_m=HULL)
+        assert result["valid"] and not result["trusted_for_venue_execution"]
+        assert result["reason"]=="projector_not_usable_and_validated"
 
 @pytest.mark.parametrize("changed",["detection","features","camera"])
 def test_all_sensor_inputs_require_exact_stamp(changed):

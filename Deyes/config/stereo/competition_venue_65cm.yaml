@@ -4,7 +4,7 @@ table_height_m: 0.650
 reference_table_height_m: 0.560
 reference_plane_distance_m: null
 expected_plane_distance_m: null
-expected_plane_distance_rule: "abs(reference_plane_distance_m) + 0.090"
+expected_plane_distance_rule: "abs(reference_plane_distance_m) - 0.090"
 touch_plane_z_m: 0.135
 orientation_deg: [179.99, -12.0, 0.0]
 fallbacks:

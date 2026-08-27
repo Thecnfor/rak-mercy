@@ -75,7 +75,9 @@ def _plane_audit(plane: Mapping[str, Any] | None, policy: TargetPolicy) -> tuple
         return True, "fixed_height_unverified", None
     if not math.isfinite(distance):
         return True, "fixed_height_unverified", None
-    expected = abs(float(policy.reference_plane_distance_m)) + (TABLE_HEIGHT_M-REFERENCE_TABLE_HEIGHT_M)
+    expected = abs(float(policy.reference_plane_distance_m)) - (TABLE_HEIGHT_M-REFERENCE_TABLE_HEIGHT_M)
+    if expected <= 0.0:
+        return True, "fixed_height_unverified", None
     if abs(distance - expected) > policy.table_height_tolerance_m:
         return False, "table_height_deviation_exceeds_25mm", distance
     return True, "fixed_height_verified", distance
@@ -111,20 +113,24 @@ def _bbox_center(detection: Mapping[str, Any], width: int, height: int, margin: 
     return ((x1+x2)/2.0, (y1+y2)/2.0), str(box.get("target_id", "pen"))
 
 
-def _ray(projector: Any, u: float, v: float, camera_info: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, float | None]:
+def _ray(projector: Any, u: float, v: float, camera_info: Mapping[str, Any]) -> tuple[np.ndarray, np.ndarray, float | None, bool]:
     method = getattr(projector, "ray_for_pixel", None) or getattr(projector, "pixel_to_ray", None)
     result = method(u, v, camera_info) if method else projector(u, v, camera_info)
     if isinstance(result, Mapping):
         origin = result.get("origin_m", result.get("origin"))
         direction = result.get("direction_unit", result.get("direction"))
         predicted = result.get("predicted_camera_z_m")
+        usable = result.get("usable", getattr(projector, "usable", False))
+        validated = result.get("validated", getattr(projector, "validated", False))
     else:
         origin, direction = result
         predicted = None
+        usable = getattr(projector, "usable", False)
+        validated = getattr(projector, "validated", False)
     o = np.asarray(origin, dtype=float).reshape(3); d = np.asarray(direction, dtype=float).reshape(3)
     if not np.all(np.isfinite(o)) or not np.all(np.isfinite(d)) or np.linalg.norm(d) < 1e-9:
         raise ValueError("projector_ray_invalid")
-    return o, d / np.linalg.norm(d), None if predicted is None else float(predicted)
+    return o, d / np.linalg.norm(d), None if predicted is None else float(predicted), usable is True and validated is True
 
 
 def build_competition_pick_target(*, detection: Mapping[str, Any], pen_features: Mapping[str, Any],
@@ -157,7 +163,7 @@ def build_competition_pick_target(*, detection: Mapping[str, Any], pen_features:
         source = "bbox_center"
     if pixel is None and policy.fixed_xy_fallback_enabled:
         xy = policy.fixed_xy_m; source = "fixed_xy_fallback"; target_id = "fixed-xy"
-        median_depth = predicted_depth = None
+        median_depth = predicted_depth = None; projector_trusted = False
     elif pixel is None:
         return _reject("no_eligible_axis_or_bbox_target", stamp_ns, height_verification=height_state)
     else:
@@ -169,7 +175,7 @@ def build_competition_pick_target(*, detection: Mapping[str, Any], pen_features:
             return _reject("target_depth_invalid", stamp_ns)
         median_depth = float(np.median(valid_depth))
         try:
-            origin, direction, predicted_depth = _ray(projector, u, v, camera_info)
+            origin, direction, predicted_depth, projector_trusted = _ray(projector, u, v, camera_info)
         except (TypeError, ValueError, AttributeError) as exc:
             return _reject(f"projector_rejected:{exc}", stamp_ns)
         if abs(direction[2]) < 1e-9:
@@ -189,8 +195,11 @@ def build_competition_pick_target(*, detection: Mapping[str, Any], pen_features:
     if not (policy.workspace_x_m[0] <= xy[0] <= policy.workspace_x_m[1] and
             policy.workspace_y_m[0] <= xy[1] <= policy.workspace_y_m[1]):
         return _reject("target_outside_workspace", stamp_ns, target_xy_m=list(xy))
-    return {"schema": TARGET_SCHEMA, "stamp_ns": stamp_ns, "valid": True, "reason": "ok",
-            "trusted_for_venue_execution": source != "fixed_xy_fallback", "commands_emitted": False,
+    venue_trusted = source != "fixed_xy_fallback" and projector_trusted
+    return {"schema": TARGET_SCHEMA, "stamp_ns": stamp_ns, "valid": True,
+            "reason": "ok" if venue_trusted else "projector_not_usable_and_validated",
+            "trusted_for_venue_execution": venue_trusted, "projector_usable_and_validated": projector_trusted,
+            "commands_emitted": False,
             "target_id": target_id, "selection_source": source, "pixel_uv": None if pixel is None else list(pixel),
             "right_arm_sdk_target_m": [xy[0], xy[1], TOUCH_Z_M], "orientation_deg": [179.99, -12.0, 0.0],
             "cuda_median_depth_m": median_depth, "predicted_depth_m": predicted_depth,
