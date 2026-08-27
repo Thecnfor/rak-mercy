@@ -61,6 +61,7 @@ setup(
             "isaac_right_arm_stage_executor = deyes_stereo.isaac_right_arm_stage_executor_node:main",
             "isaac_single_pen_candidate = deyes_stereo.isaac_single_pen_candidate_node:main",
             "pick_nav_coordinator = deyes_stereo.pick_nav_coordinator_node:main",
+            "competition_perception_gate = deyes_stereo.competition_perception_gate_node:main",
         ],
     },
 )

@@ -1,0 +1,41 @@
+yolo_detector_node:
+  ros__parameters:
+    image_topic: "/x1/stereo/debug/left_rect"
+    output_topic: "/x1/detection/boxes"
+    status_topic: "/x1/detection/boxes_status"
+    debug_image_topic: "/x1/detection/debug_image"
+    publish_period_sec: 0.12
+    backend: "tensorrt"
+    model_path: ""
+    device: "cuda:0"
+    conf_threshold: 0.25
+    iou_threshold: 0.45
+    input_width: 416
+    input_height: 416
+    max_detections: 4
+    publish_debug_image: false
+    class_names_json: '{"0":"pen"}'
+    model_id: "pen-student-416-venue"
+    expected_model_sha256: ""
+    expected_class_count: 1
+    tensorrt_output_layout: "yolov5"
+    expected_max_targets: 1
+    duplicate_iou: 0.80
+    run_mode: "continuous"
+    release_backend_after_inference: false
+    allowed_class_ids_json: "[0]"
+
+# This profile intentionally separates two confidence levels:
+# CUDA depth is an admission check; XY remains the venue-tuned fixed BaseCoords pose.
+# The calibration is validated=false and must never satisfy the formal hand-eye gate.
+competition_fixed_scene:
+  calibration_id: quick-motor-sweep-20260827
+  execution_mode: perception_admitted_fixed_pose
+  trusted_for_formal_handeye_execution: false
+  head_joint_11_deg: -54.93
+  head_joint_12_deg: 2.63
+  right_arm_pick_base_coords_mm_deg: [400.0, 10.0, 45.0, 179.99, -12.0, 0.0]
+  right_arm_pregrasp_z_mm: 90.0
+  place_base_coords_mm_deg: [400.0, 10.0, 75.0, 179.99, -12.0, 0.0]
+  gripper_open_value: 70
+  gripper_closed_value: 0
