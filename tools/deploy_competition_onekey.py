@@ -189,10 +189,10 @@ timeout 10 ros2 topic echo --once /x1/stereo/pair_diagnostics >"$DRY_LOG/pair_di
 DRY_LOG="$DRY_LOG" python3 - <<'PY'
 import os,pathlib,re
 root=pathlib.Path(os.environ['DRY_LOG'])
-hz=[float(x) for x in re.findall(r'average rate:\s*([0-9.]+)',(root/'depth_hz.log').read_text())]
+hz=[float(x) for x in re.findall(r'average rate:\\s*([0-9.]+)',(root/'depth_hz.log').read_text())]
 if not hz or hz[-1] < 12.0: raise SystemExit('depth topic below 12Hz')
 diag=(root/'pair_diagnostics.txt').read_text()
-m=re.search(r'key:\s*["\']?window_p95_skew_ms["\']?[\s\S]*?value:\s*["\']?([0-9.]+)',diag)
+m=re.search(r'key:\\s*["\']?window_p95_skew_ms["\']?[\\s\\S]*?value:\\s*["\']?([0-9.]+)',diag)
 if not m or float(m.group(1)) > 10.0: raise SystemExit('pair skew missing or above 10ms')
 (root/'acceptance.txt').write_text(f'depth_hz={{hz[-1]:.3f}}\\npair_p95_skew_ms={{float(m.group(1)):.3f}}\\n')
 PY
