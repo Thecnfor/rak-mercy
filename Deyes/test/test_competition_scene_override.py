@@ -31,6 +31,9 @@ def test_override_lowers_both_tables_and_keeps_exactly_one_pen(tmp_path: Path):
     assert layer.count("active = false") == 3
     assert "0.625" in layer
     assert "0.658" in layer
+    assert "physxScene:timeStepsPerSecond = 60" in layer
+    assert "inputs:dt.connect = None" in layer
+    assert "inputs:dt = 0.016666666666666666" in layer
     assert str(source_usd) in layer
 
 

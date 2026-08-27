@@ -113,6 +113,10 @@ def build_scene_override(
 
 over "World"
 {{
+    over "PhysicsScene"
+    {{
+        uint physxScene:timeStepsPerSecond = 60
+    }}
     over "Tables"
     {{
 {table_blocks}
@@ -125,6 +129,23 @@ over "World"
             custom string teamRak:competitionPenSelection = "single_pen_fixture"
         }}
 {hidden_pens}
+    }}
+    over "Robot"
+    {{
+        over "mercury_x1"
+        {{
+            over "Graph"
+            {{
+                over "DiffController"
+                {{
+                    over "differential_controller"
+                    {{
+                        custom double inputs:dt = 0.016666666666666666
+                        double inputs:dt.connect = None
+                    }}
+                }}
+            }}
+        }}
     }}
 }}
 '''
