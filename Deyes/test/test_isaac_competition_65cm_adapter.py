@@ -58,6 +58,7 @@ def test_synthetic_pen_trace_is_explicit_and_requires_30mm_lift():
         "synthetic_attachment": True,
         "rigid_body_disabled_while_carried": True,
         "rigid_body_reenabled_after_release": True,
+        "release_settle_updates": 30,
         "initial_world_m": [3.62, 0.75, 0.658],
         "lifted_world_m": [3.62, 0.75, 0.700],
         "placed_world_m": [2.87, 0.14, 0.658],
@@ -78,6 +79,7 @@ def test_synthetic_pen_trace_requires_table_2_place_bounds():
         "synthetic_attachment": True,
         "rigid_body_disabled_while_carried": True,
         "rigid_body_reenabled_after_release": True,
+        "release_settle_updates": 30,
         "initial_world_m": [3.49, 0.84, 0.656],
         "lifted_world_m": [3.49, 0.84, 0.716],
         "placed_world_m": [999.0, 999.0, 999.0],
@@ -88,6 +90,12 @@ def test_synthetic_pen_trace_requires_table_2_place_bounds():
     )
     trace["placed_world_m"] = [2.87, 0.14, 0.800]
     assert validate_synthetic_pen_trace(trace) == (False, "pen_place_height_invalid")
+    trace["placed_world_m"] = [2.87, 0.14, 0.668]
+    trace["release_settle_updates"] = 0
+    assert validate_synthetic_pen_trace(trace) == (
+        False,
+        "synthetic_release_not_settled",
+    )
 
 
 def test_safe_base_adapter_requires_pinned_sha256(tmp_path):

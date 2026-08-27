@@ -99,6 +99,12 @@ def validate_synthetic_pen_trace(trace: Mapping[str, object]) -> tuple[bool, str
     if trace.get("rigid_body_reenabled_after_release") is not True:
         return False, "synthetic_release_method_missing"
     try:
+        settle_updates = int(trace.get("release_settle_updates", 0))
+    except (TypeError, ValueError):
+        return False, "synthetic_release_settle_invalid"
+    if settle_updates < 3:
+        return False, "synthetic_release_not_settled"
+    try:
         initial = [float(value) for value in trace["initial_world_m"]]  # type: ignore[index]
         lifted = [float(value) for value in trace["lifted_world_m"]]  # type: ignore[index]
         placed = [float(value) for value in trace["placed_world_m"]]  # type: ignore[index]
@@ -245,17 +251,19 @@ async def configure() -> None:
         lifted_position, _ = pen.get_world_pose()
         placed_target = np.asarray(TABLE_2_PLACE_WORLD_M, dtype=float)
         pen.set_world_pose(position=placed_target, orientation=orientation)
-        for _ in range(2):
-            await app.next_update_async()
-        placed_position, _ = pen.get_world_pose()
         pen.enable_rigid_body_physics()
         pen.set_linear_velocity(np.zeros(3, dtype=float))
         pen.set_angular_velocity(np.zeros(3, dtype=float))
+        release_settle_updates = 30
+        for _ in range(release_settle_updates):
+            await app.next_update_async()
+        placed_position, _ = pen.get_world_pose()
         pen_trace = {
             "classification": "C_synthetic_attachment_with_isaac_rigid_body_state",
             "synthetic_attachment": True,
             "rigid_body_disabled_while_carried": True,
             "rigid_body_reenabled_after_release": True,
+            "release_settle_updates": release_settle_updates,
             "initial_world_m": [float(value) for value in initial_position],
             "lifted_world_m": [float(value) for value in lifted_position],
             "placed_world_m": [float(value) for value in placed_position],
