@@ -9,6 +9,19 @@ BINARY="$ROOT/opencv-4.8.0-cuda-xavier-nx-ubuntu20.04-cuda11.4.tar.gz"
 SRC="$ROOT/opencv-4.8.0.tar.gz"
 CONTRIB="$ROOT/opencv_contrib-4.8.0.tar.gz"
 
+resolved_prefix="$(realpath -m "$PREFIX")"
+case "$resolved_prefix" in
+  /usr|/usr/*|/lib|/lib/*|/opt/ros|/opt/ros/*)
+    echo "refusing system OpenCV prefix: $resolved_prefix" >&2
+    exit 2
+    ;;
+esac
+[[ "$resolved_prefix" == */opencv-4.8.0-cuda ]] || {
+  echo "private prefix must end in /opencv-4.8.0-cuda: $resolved_prefix" >&2
+  exit 2
+}
+PREFIX="$resolved_prefix"
+
 if "$ROOT/probe_opencv_cuda.sh" "$PREFIX" >/dev/null 2>&1; then
   echo "CUDA OpenCV already ready at $PREFIX"
   exit 0
