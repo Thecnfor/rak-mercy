@@ -24,9 +24,17 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 .\tools\deploy_competition_onekey.ps1 -StopExisting -Run
 ```
 
+`-Run` 默认启用比赛展示续跑。部署预检、goal3/goal4、头部反馈、碰撞净空、串口、机器人状态和位姿反馈仍是不可绕过的硬门禁；仅运行时相机/CUDA/YOLO/target 感知失败或抓起未验证时，改用独立的 `competition_showcase_target/v1` 在 `[400,10]` mm 完成空抓、运输位姿、goal4 与放置展示。该 target 明确标记 `sensor_target_available:false`、`synthetic_target:true`，不冒充视觉 target，也不会把 `navigation_permitted` 改成 true。
+
+需要恢复原有“抓取未验证即停止”行为时使用：
+
+```powershell
+.\tools\deploy_competition_onekey.ps1 -StopExisting -Run -StrictResultGates
+```
+
 当前默认场地 profile **不会发出 Mercury 命令**：官方 URDF 的六轴 IK、FK、关节限位证据独立通过，但现有 5 mm 只是名义 TCP Z 差，考虑 5 mm 反馈容差后的保守净空为 0 mm，且未验证工具/连杆/扫掠体碰撞。因此 `kinematics_validated:true`、`collision_clearance_validated:false`、`transport_validated:false`。生产 pick/place 会在构造 Mercury、上电、夹爪或移动之前停止；两者的 `--dry-run` 仍会输出 `commands_emitted:false` 的计划。只有现场形成可审计的正保守净空/碰撞包络证据并更新场地 profile 后，才能解除该门禁；不得把名义 TCP Z 差改称碰撞净空。
 
-`-Run` 不再隐式设置任何 `ALLOW_DEGRADED`，也不需要人工 token。默认 `FIXED_TABLE_HEIGHT_MM=650`、`ALLOW_BBOX_CENTER=0`、`ALLOW_FIXED_XY_FALLBACK=0`、`FORCE_FIXED_TARGET=0`，正式路径必须使用单笔 YOLO 与 `pen_feature` 轴中点，不默认绕过 feature。ground plane 缺失或质量差时按已选择的固定 650 mm 继续并记录 `fixed_height_unverified`；健康平面只要与 650 mm 偏差超过 25 mm 就立即停止。
+`-Run` 不再隐式设置任何 `ALLOW_DEGRADED`，也不需要人工 token。默认 `FIXED_TABLE_HEIGHT_MM=650`、`ALLOW_BBOX_CENTER=0`、`ALLOW_FIXED_XY_FALLBACK=0`、`FORCE_FIXED_TARGET=0`，正式视觉路径必须使用单笔 YOLO 与 `pen_feature` 轴中点，不默认绕过 feature。展示续跑的 synthetic target 是单独结果类型，不改变正式 target 合同。ground plane 缺失或质量差时按已选择的固定 650 mm 继续并记录 `fixed_height_unverified`；健康平面只要与 650 mm 偏差超过 25 mm 就立即停止。
 
 只有人工已把笔放到场地 `[400,10]` mm 标记点，才允许同时指定下面两个选项。单独指定任一选项都会在部署器/runner 入口直接拒绝：
 
@@ -36,11 +44,11 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 
 ## 单事务顺序
 
-`ROS 1 goal3_right → 头部反馈 → ROS 2 C++ capture + CUDA depth + ground plane + YOLO + pen feature + competition target node → topic snapshot adapter 得到 competition_pick_target/v1 单目标 JSON → 关闭 target node → 单次 pick → Mercury 空夹/抓后反馈 + 原始目标 ROI 连续三帧清空 → success=true 且 navigation_permitted=true → 关闭视觉 → ROS 1 goal4_back → competition_venue_65cm.yaml place → place success JSON`
+`ROS 1 goal3_right → 头部反馈 → ROS 2 C++ capture + CUDA depth + ground plane + YOLO + pen feature + competition target node → 正常 competition target 或运行时感知失败后的 synthetic [400,10] mm showcase target → 单次 pick → 运输位姿 → 抓起验证结果 → 正常成功或展示续跑决策 → ROS 1 goal4_back → place → competition_transaction_result/v1`
 
-视觉必须保持到抓起验证完成。导航、桌高冲突、串口、机械臂反馈、target 或抓起验证任一失败都会停止，且不自动重试。ROS 1/ROS 2 每次切换都会清理另一套环境并重新 source；切回 ROS 1 后，runner 会显式恢复 colcon 安装中的 `deyes_stereo` Python 路径供 place 使用，不依赖残留的 ROS 2 环境。
+视觉可用时必须保持到抓起验证完成。运行时视觉/target 或物体抓起验证失败在默认展示模式下记录 degraded 后继续；导航、健康桌高冲突、碰撞净空、串口、机器人/夹爪反馈和运动位姿失败仍停止，且所有路径都不自动重试。ROS 1/ROS 2 每次切换都会清理另一套环境并重新 source；切回 ROS 1 后，runner 会显式恢复 colcon 安装中的 `deyes_stereo` Python 路径供 place 使用，不依赖残留的 ROS 2 环境。
 
-每次比赛日志位于 `~/temp/deyes/competition/<transaction_id>/`，至少包含 `target.json`、`admission.json`、`engine_manifest.json`、`engine_validation.json`、`grasp_feedback.json`、`grasp_verification.json`、`place.json`、`trace.jsonl` 和各步骤日志。
+每次比赛日志位于 `~/temp/deyes/competition/<transaction_id>/`，至少包含正常 `target.json` 或 `showcase_target.json`、`admission.json`、`engine_manifest.json`、`engine_validation.json`、`grasp_verification.json`、`pick_decision.json`、`place.json`、`transaction_result.json`、`trace.jsonl` 和各步骤日志。展示完整但物体未验证时命令退出 0，同时 `competition_success:false`、`showcase_complete:true`，终端打印醒目的 `SHOWCASE COMPLETE` 和 `COMPETITION SUCCESS: false`。
 
 ## 故障矩阵
 
@@ -49,10 +57,10 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 | ONNX、engine、sidecar SHA 或实际 TensorRT binding ABI 不符 | 部署或 runner 停止；不复用旧 engine | 不动作 |
 | CUDA/OpenCV 模块、aarch64/7.2 架构或 `ldd` 隔离检查失败 | 部署停止 | 不动作 |
 | dry-run depth < 12 Hz、skew > 10 ms，或 CameraInfo/YOLO/ground plane/pen feature 任一状态/输出 topic 缺失或契约不符 | 部署停止 | 不动作 |
-| goal3、头部命令或反馈失败 | runner 停止 | 不抓取 |
-| YOLO 为零笔、多笔、ambiguous、未完成，或未明确允许自动抓取 | target 输出一次拒绝结果后退出 | 不抓取、零重试 |
-| detection、pen feature、32FC1 depth、rectified CameraInfo、ground plane stamp 不完全相同，或 depth 不是 `32FC1` | target 输出一次拒绝结果后退出 | 不抓取、零重试 |
-| 触点 PnP `RMS=4.1917 px > 4 px`、`usable:false` | 正常随机 XY fail-closed | 仅显式 force + `[400,10]` mm 人工标记可走 degraded |
+| goal3、头部命令或反馈失败 | runner 硬停止 | 不抓取 |
+| YOLO 为零笔、多笔、ambiguous、未完成，或未明确允许自动抓取 | 严格模式停止；默认展示模式生成独立 synthetic `[400,10]` target | 展示空抓、运输、goal4、空放置 |
+| detection、pen feature、32FC1 depth、rectified CameraInfo、ground plane stamp 不完全相同，或 depth 不是 `32FC1` | 严格模式停止；默认展示模式 fixed-marker 续跑 | 不宣称感知成功 |
+| 触点 PnP `RMS=4.1917 px > 4 px`、`usable:false` | 正常随机 XY 仍 fail-closed；默认展示模式使用独立 synthetic target | 不伪造 projector/competition success |
 | ground plane 缺失/质量差 | 固定 650 mm 继续，记录 `fixed_height_unverified` | 仅按 target 合同继续 |
 | 健康 ground plane 与 650 mm 偏差 > 25 mm | runner 停止 | 不抓取 |
 | IK/FK/关节限位通过，但碰撞净空未验证或保守净空 ≤ 0 mm | pick/place 在 Mercury 构造/上电前停止；dry-run 仍输出计划 | 不碰串口、不发夹爪/移动命令 |
@@ -60,7 +68,8 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 | 固定 XY 未显式允许 | target 停止 | 不抓取 |
 | 固定 XY 与 force 未同时启用 | 入口立即停止 | 不会自动改为 `[400,10]` |
 | 固定 XY 已强制，但 target 不是 `selection_source=fixed_xy_fallback`、XY 不是 `[400,10]` mm、或无同 stamp 观测像素 | runner 停止 | 不抓取或不放行抓取验证 |
-| pick 串口/反馈失败、原始 ROI 未连续三帧清空、夹爪反馈增量不足，或 GraspVerifier 未同时给出 `success=true`、`navigation_permitted=true` | runner 停止，视觉仍由清理流程关闭 | 不去 goal4、不 place |
+| pick 串口、机器人状态、位姿或稳定夹爪反馈失败 | runner 硬停止 | 不去 goal4、不 place |
+| pick 动作及运输位姿完成，但 ROI 感知不可用或未证明抓到物体 | 严格模式停止；默认展示模式保持 `navigation_permitted:false` 并用独立 showcase 决策续跑 | goal4、空放置，最终 competition=false/showcase=true |
 | goal4、place 串口/反馈失败或 `place.json` 不成功 | runner 停止 | 不重复执行 |
 
 `-StopExisting` 只向明确命名的旧 Deyes 视觉/target 节点发送 `SIGINT`。部署不删除远端目录、不覆盖系统 OpenCV，也不操作机械臂。
@@ -74,6 +83,6 @@ dry-run 通过后，一键入口可继续做完整的生产门禁检查：
 3. 30 秒视觉 dry-run 的 depth ≥ 12 Hz、pair P95 skew ≤ 10 ms，且 `vision_contract.json` 包含 CameraInfo、YOLO engine/model 链、ground plane 与 pen feature 的真实 topic 证据。
 4. `competition_pick_target_node.py` 的严格同 stamp live adapter 已实现；必须在 Jetson 上验证 detection、pen feature、32FC1 depth、rectified CameraInfo 与 ground plane 的真实 QoS/时间戳能够冻结成一次 `competition_pick_target/v1`。占位、超时或拒绝 payload 仍由 snapshot adapter fail-closed。
 5. 正式 profile 为 `competition_venue_65cm.yaml`；相机校正使用 `venue_20260827_quick_stereo.yaml`，触点投影器必须单独使用 `venue_20260827_touch_projector.yaml`，不得混用。当前投影器 RMS `4.1917 px > 4 px`，必须保持 `usable:false`；正常随机 XY 因而 fail-closed。
-6. pick 使用 `--x-mm/--y-mm/--venue-profile/--target-json/--feedback-adapter/--result-json`，place 使用 `--venue-profile/--result-json`。GraspVerifier 必须同时输出 `success=true` 与 `navigation_permitted=true` 才能去 goal4；place 还需写出成功的 `competition_place_execution/v1`。
+6. 正常 pick 使用 `--target-json` 与 live feedback；synthetic 展示 pick 使用独立 `--showcase-target-json`。GraspVerifier 只有同时输出 `success=true` 与 `navigation_permitted=true` 才能形成 `competition_success:true`；默认展示续跑只能通过 `continue_showcase` 去 goal4，且保持物体未验证事实。place 需写出动作成功、`object_state` 与 `object_delivery_verified` 一致的 `competition_place_execution/v1`。
 7. goal3/goal4、头部、右臂串口反馈与急停现场可用；真实抓起能输出 `success=true` 与 `navigation_permitted=true`。
 8. 对运输位姿及完整抓取/放置扫掠路径完成工具、连杆、桌面与自碰撞的现场/全几何净空验证，得到大于 0 mm 的保守下界；当前该项未通过，属于 Tier D 解锁项，默认 profile 保持 fail-closed。

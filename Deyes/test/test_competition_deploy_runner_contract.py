@@ -62,6 +62,223 @@ def _validate(mode: str, tmp_path: Path, **values: str) -> subprocess.CompletedP
 
 
 class CompetitionDeployRunnerTest(unittest.TestCase):
+    def test_ros_free_runner_fixture_completes_goal4_and_place_after_target_and_grasp_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            fake_bin = tmp / "bin"; fake_bin.mkdir()
+            fake_scripts = tmp / "scripts"; fake_scripts.mkdir()
+            install = tmp / "install"; install.mkdir()
+            assets = tmp / "assets"; assets.mkdir()
+            logs = tmp / "logs"
+            events = tmp / "events.log"
+
+            def executable(path: Path, source: str) -> None:
+                path.write_text(source, encoding="utf-8")
+                path.chmod(0o755)
+
+            package_path = ROOT / "Deyes/src/deyes_stereo"
+            setup = tmp / "setup.bash"
+            setup.write_text("true\n", encoding="utf-8")
+            (install / "setup.bash").write_text(
+                f'export PYTHONPATH="{package_path}:${{PYTHONPATH:-}}"\n', encoding="utf-8"
+            )
+            executable(assets / "probe_opencv_cuda.sh", "#!/usr/bin/env bash\nexit 0\n")
+            executable(fake_bin / "rostopic", "#!/usr/bin/env bash\necho /move_base/goal\n")
+            executable(fake_bin / "roslaunch", "#!/usr/bin/env bash\nexec sleep 30\n")
+            executable(fake_bin / "ros2", """#!/usr/bin/env bash
+if [[ "$1" == launch || "$1" == run ]]; then
+  trap 'exit 0' INT TERM
+  while true; do sleep .1; done
+fi
+exit 2
+""")
+            executable(fake_scripts / "send_one_goal.py", """#!/usr/bin/env python3
+import os,sys
+with open(os.environ['EVENT_LOG'],'a') as stream: stream.write(sys.argv[1]+'\\n')
+if os.environ.get('FAIL_GOAL') == sys.argv[1]: raise SystemExit(2)
+""")
+            executable(fake_scripts / "set_venue_head.py", """#!/usr/bin/env python3
+import os
+with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('head\\n')
+""")
+            executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import sys
+print('target rejected: projector_not_usable_and_validated',file=sys.stderr)
+raise SystemExit(3)
+""")
+            executable(fake_scripts / "competition_grasp_feedback_adapter.py", "#!/usr/bin/env python3\n")
+            executable(fake_scripts / "pick_pen_degraded.py", """#!/usr/bin/env python3
+import argparse,json,os
+p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--showcase-target-json'); p.add_argument('--x-mm'); p.add_argument('--y-mm'); p.add_argument('--venue-profile'); a=p.parse_args()
+assert a.showcase_target_json
+with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('pick_transport\\n')
+json.dump({'schema':'competition_grasp_verification/v1','success':False,'navigation_permitted':False,'motion_completed':True,'transport_pose_reached':True,'hardware_ok':True,'object_grasp_verified':False,'verification_failure_class':'object_absent','reason':'grasp_not_verified'},open(a.result_json,'w'))
+raise SystemExit(2)
+""")
+            executable(fake_scripts / "place_pen_degraded.py", """#!/usr/bin/env python3
+import argparse,json,os
+p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--venue-profile'); p.add_argument('--object-state'); p.add_argument('--showcase-mode',action='store_true'); a=p.parse_args()
+assert a.object_state=='unverified' and a.showcase_mode
+with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('place\\n')
+json.dump({'schema':'competition_place_execution/v1','success':True,'motion_completed':True,'object_state':'unverified','object_delivery_verified':False,'showcase_mode':True},open(a.result_json,'w'))
+""")
+
+            engine = tmp / "model.engine"; engine.write_bytes(b"fixture-engine")
+            manifest = tmp / "model.engine.manifest.json"
+            manifest.write_text(json.dumps({
+                "onnx_sha256": EXPECTED_ONNX,
+                "engine_sha256": hashlib.sha256(engine.read_bytes()).hexdigest(),
+                "tensorrt_version": "fixture", "cuda_version": "fixture",
+                "input_shape": [1, 3, 416, 416], "output_layout": "yolov5:[1,N,5+C]",
+                "precision": "fp16", "bindings": _engine_bindings(),
+            }), encoding="utf-8")
+            env = os.environ.copy()
+            env.update({
+                "PATH": str(fake_bin) + os.pathsep + env["PATH"],
+                "PYTHONPATH": str(package_path), "PYTHON_BIN": sys.executable,
+                "RAC_SCRIPTS": str(fake_scripts), "DEYES_INSTALL": str(install),
+                "DEYES_ASSETS": str(assets), "DEYES_OPENCV_PREFIX": str(tmp / "opencv"),
+                "DEYES_CALIB_PATH": str(ROOT / "Deyes/config/camera/venue_20260827_quick_stereo.yaml"),
+                "DEYES_PROJECTOR_PATH": str(ROOT / "Deyes/config/camera/venue_20260827_touch_projector.yaml"),
+                "DEYES_DETECTOR_CONFIG": str(ROOT / "Deyes/config/stereo/competition_fixed_scene.yaml"),
+                "COMPETITION_SITE_METADATA": str(ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml"),
+                "DEYES_ENGINE_PATH": str(engine), "DEYES_ENGINE_MANIFEST": str(manifest),
+                "ROS1_SETUP": str(setup), "ROS2_SETUP": str(setup), "MERCURY_ROS1_SETUP": str(setup),
+                "LOG_DIR": str(logs), "EVENT_LOG": str(events),
+                "COMPETITION_TRANSACTION_ID": "fixture-showcase", "VISION_STARTUP_SEC": "0",
+                "TARGET_SUBSCRIBER_READY_SEC": "0", "TARGET_STARTUP_SEC": "0",
+                "COMPETITION_SHOWCASE_CONTINUE": "1", "PROCESS_INT_POLLS": "1",
+                "PROCESS_TERM_POLLS": "1",
+            })
+            completed = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertIn("SHOWCASE COMPLETE", completed.stdout)
+            self.assertIn("COMPETITION SUCCESS: false", completed.stdout)
+            result = json.loads((logs / "transaction_result.json").read_text(encoding="utf-8"))
+            self.assertIs(result["competition_success"], False)
+            self.assertIs(result["showcase_complete"], True)
+            self.assertEqual(result["target_source"], "fixed_marker_showcase")
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head", "pick_transport", "goal4_back", "place",
+            ])
+
+            strict_logs = tmp / "strict-logs"
+            events.write_text("", encoding="utf-8")
+            env.update({
+                "LOG_DIR": str(strict_logs),
+                "COMPETITION_TRANSACTION_ID": "fixture-strict",
+                "COMPETITION_SHOWCASE_CONTINUE": "0",
+            })
+            strict = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertNotEqual(strict.returncode, 0)
+            self.assertNotIn("SHOWCASE COMPLETE", strict.stdout)
+            strict_result = json.loads(
+                (strict_logs / "transaction_result.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(strict_result["showcase_complete"], False)
+            self.assertIn("competition_target_failed", strict_result["hard_stop_reason"])
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head",
+            ])
+
+            for failed_goal, expected_events in (
+                ("goal3_right", ["goal3_right"]),
+                ("goal4_back", ["goal3_right", "head", "pick_transport", "goal4_back"]),
+            ):
+                executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import sys
+print('target rejected: projector_not_usable_and_validated',file=sys.stderr)
+raise SystemExit(3)
+""")
+                navigation_logs = tmp / f"{failed_goal}-hard-stop-logs"
+                events.write_text("", encoding="utf-8")
+                env.update({
+                    "LOG_DIR": str(navigation_logs),
+                    "COMPETITION_TRANSACTION_ID": f"fixture-{failed_goal}-hard-stop",
+                    "COMPETITION_SHOWCASE_CONTINUE": "1",
+                    "FAIL_GOAL": failed_goal,
+                })
+                navigation_failure = subprocess.run(
+                    ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                    check=False, timeout=20,
+                )
+                self.assertNotEqual(navigation_failure.returncode, 0)
+                navigation_result = json.loads(
+                    (navigation_logs / "transaction_result.json").read_text(encoding="utf-8")
+                )
+                self.assertIs(navigation_result["showcase_complete"], False)
+                self.assertIn("navigation", navigation_result["hard_stop_reason"])
+                self.assertEqual(
+                    events.read_text(encoding="utf-8").splitlines(), expected_events
+                )
+            env.pop("FAIL_GOAL")
+
+            executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
+import sys
+print('target rejected: table_height_deviation_exceeds_25mm',file=sys.stderr)
+raise SystemExit(3)
+""")
+            plane_logs = tmp / "plane-hard-stop-logs"
+            events.write_text("", encoding="utf-8")
+            env.update({
+                "LOG_DIR": str(plane_logs),
+                "COMPETITION_TRANSACTION_ID": "fixture-plane-hard-stop",
+                "COMPETITION_SHOWCASE_CONTINUE": "1",
+            })
+            plane_failure = subprocess.run(
+                ["bash", str(RUNNER)], env=env, text=True, capture_output=True,
+                check=False, timeout=20,
+            )
+            self.assertNotEqual(plane_failure.returncode, 0)
+            plane_result = json.loads(
+                (plane_logs / "transaction_result.json").read_text(encoding="utf-8")
+            )
+            self.assertIs(plane_result["showcase_complete"], False)
+            self.assertIn("showcase target contract failed", plane_result["hard_stop_reason"])
+            self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
+                "goal3_right", "head",
+            ])
+
+    def test_run_defaults_to_showcase_continuation_with_explicit_strict_override(self) -> None:
+        runner = RUNNER.read_text(encoding="utf-8")
+        self.assertIn(
+            'COMPETITION_SHOWCASE_CONTINUE="${COMPETITION_SHOWCASE_CONTINUE:-1}"',
+            runner,
+        )
+        self.assertIn("bool01 COMPETITION_SHOWCASE_CONTINUE", runner)
+
+        ps1 = PS1.read_text(encoding="utf-8")
+        self.assertIn("[switch]$StrictResultGates", ps1)
+        self.assertIn('"--strict-result-gates"', ps1)
+
+        deploy = DEPLOY.read_text(encoding="utf-8")
+        self.assertIn('parser.add_argument("--strict-result-gates", action="store_true")', deploy)
+        self.assertIn('COMPETITION_SHOWCASE_CONTINUE=', deploy)
+
+    def test_runner_has_truthful_showcase_fallback_and_dual_terminal_status(self) -> None:
+        content = RUNNER.read_text(encoding="utf-8")
+        for token in (
+            "competition_showcase_target/v1",
+            "fixed_marker_showcase",
+            "decide_pick_continuation",
+            "competition_transaction_result/v1",
+            '"competition_success"',
+            '"showcase_complete"',
+            "--showcase-target-json",
+            "--object-state",
+            "SHOWCASE COMPLETE",
+            "COMPETITION SUCCESS: false",
+        ):
+            self.assertIn(token, content)
+        self.assertNotIn('result["navigation_permitted"] = True', content)
+        self.assertNotIn('data["navigation_permitted"] = True', content)
+
     def test_deploy_inventory_contains_exact_packages_scripts_config_and_pinned_onnx(self) -> None:
         deploy = _load_deploy(); remotes = {str(remote) for _, remote in deploy.local_files()}
         for package in ("deyes_interfaces", "deyes_capture_cpp", "deyes_stereo", "deyes_bringup"):
@@ -141,7 +358,7 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
     def test_runner_order_permissions_and_powershell_flags_are_fail_closed(self) -> None:
         content = RUNNER.read_text(encoding="utf-8")
         order = [content.index(token) for token in ("run_step nav_goal3", "run_step set_head", 'trace "competition_target" "started"',
-            "run_step pick", "validate_grasp ||", "stop_vision\n\nsource_ros1", "run_step nav_goal4", "run_step place")]
+            "run_step pick", "decide_pick_continuation", "stop_vision\n\nsource_ros1", "run_step nav_goal4", "run_step place")]
         self.assertEqual(order, sorted(order))
         for token in ('FIXED_TABLE_HEIGHT_MM="${FIXED_TABLE_HEIGHT_MM:-650}"', 'ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-0}"',
                       'ALLOW_FIXED_XY_FALLBACK="${ALLOW_FIXED_XY_FALLBACK:-0}"', 'FORCE_FIXED_TARGET="${FORCE_FIXED_TARGET:-0}"'):
@@ -328,8 +545,18 @@ class CompetitionDeployRunnerTest(unittest.TestCase):
             self.assertNotEqual(_validate("grasp", tmp_path).returncode, 0)
             place = tmp_path / "place.json"; place.write_text('{"success": false}')
             self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
-            place.write_text('{"schema": "competition_place_execution/v1", "success": true}')
+            place.write_text(json.dumps({"schema": "competition_place_execution/v1",
+                "success": True, "motion_completed": True, "object_state": "verified",
+                "object_delivery_verified": True, "showcase_mode": False}))
             self.assertEqual(_validate("place", tmp_path).returncode, 0)
+            place.write_text(json.dumps({"schema": "competition_place_execution/v1",
+                "success": True, "motion_completed": True, "object_state": "unverified",
+                "object_delivery_verified": False, "showcase_mode": True}))
+            self.assertEqual(_validate("place", tmp_path).returncode, 0)
+            place.write_text(json.dumps({"schema": "competition_place_execution/v1",
+                "success": True, "motion_completed": True, "object_state": "unverified",
+                "object_delivery_verified": True, "showcase_mode": True}))
+            self.assertNotEqual(_validate("place", tmp_path).returncode, 0)
 
     def test_grasp_feedback_adapter_replays_real_payload_shape_and_requires_three_clear_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

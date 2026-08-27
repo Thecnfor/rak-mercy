@@ -2,13 +2,68 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+import math
+from typing import Any, Mapping, Sequence
 
 
 SHOWCASE_XY_MM = (400.0, 10.0)
 SHOWCASE_CONTACT_Z_M = 0.135
 SHOWCASE_ORIENTATION_DEG = (179.99, -12.0, 0.0)
 RECOVERABLE_PICK_FAILURE_CLASSES = frozenset({"object_absent", "perception"})
+RECOVERABLE_SHOWCASE_FAILURES = frozenset(
+    {
+        "runtime_camera_exit",
+        "runtime_cuda_exit",
+        "runtime_yolo_exit",
+        "target_node_exit",
+        "target_timeout",
+        "target_rejected",
+        "target_zero_objects",
+        "target_multiple_objects",
+        "exact_stamp_mismatch",
+        "depth_invalid",
+        "camera_info_invalid",
+        "pen_feature_invalid",
+        "pnp_rejected",
+        "roi_verification_unavailable",
+        "object_not_verified",
+    }
+)
+
+
+def classify_showcase_failure(failure_code: str, *, showcase_enabled: bool) -> str:
+    """Classify a canonical failure code; unknown failures always stop."""
+    if showcase_enabled and failure_code in RECOVERABLE_SHOWCASE_FAILURES:
+        return "continue_showcase"
+    return "hard_stop"
+
+
+def runtime_perception_failure_code(reason: str) -> str:
+    """Normalize runner details without weakening the healthy-plane hard gate."""
+    value = reason.lower()
+    if "table_height_deviation_exceeds_25mm" in value:
+        return "healthy_plane_deviation_over_25mm"
+    if "runtime_vision_launch_exited" in value:
+        return "runtime_camera_exit"
+    if "competition_target_node_exited" in value:
+        return "target_node_exit"
+    if "timeout" in value or "rc=2" in value:
+        return "target_timeout"
+    if "zero" in value or "no_eligible" in value:
+        return "target_zero_objects"
+    if "multiple" in value or "ambiguous" in value:
+        return "target_multiple_objects"
+    if "stamp" in value:
+        return "exact_stamp_mismatch"
+    if "camera_info" in value:
+        return "camera_info_invalid"
+    if "depth" in value:
+        return "depth_invalid"
+    if "feature" in value or "axis" in value:
+        return "pen_feature_invalid"
+    if "projector" in value or "pnp" in value or "reprojection" in value:
+        return "pnp_rejected"
+    return "target_rejected"
 
 
 def build_showcase_target(reason: str) -> dict[str, Any]:
@@ -43,6 +98,38 @@ def validate_showcase_target(candidate: Any) -> dict[str, Any]:
     if candidate != expected:
         raise ValueError("showcase target fixed-marker contract mismatch")
     return dict(candidate)
+
+
+def validate_showcase_site(profile: Mapping[str, Any]) -> None:
+    """Require the fixed marker to retain every measured 650 mm venue truth."""
+    if profile.get("schema") != "competition_venue_profile/v1":
+        raise ValueError("showcase site schema mismatch")
+    scalar_truth = {
+        "table_height_m": 0.650,
+        "reference_table_height_m": 0.560,
+        "reference_plane_distance_m": 0.559428925,
+        "expected_plane_distance_m": 0.469428925,
+        "touch_plane_z_m": SHOWCASE_CONTACT_Z_M,
+    }
+    for field, expected in scalar_truth.items():
+        try:
+            actual = float(profile[field])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"showcase site {field} missing or invalid") from exc
+        if not math.isclose(actual, expected, abs_tol=1e-12):
+            raise ValueError(f"showcase site {field} must equal {expected}")
+    if list(profile.get("orientation_deg", [])) != list(SHOWCASE_ORIENTATION_DEG):
+        raise ValueError("showcase site orientation_deg mismatch")
+    fixed_xy = profile.get("fallbacks", {}).get("fixed_xy", {}).get("xy_m")
+    if fixed_xy != [0.4, 0.01]:
+        raise ValueError("showcase site fixed_xy marker mismatch")
+    if not math.isclose(
+        float(profile["reference_plane_distance_m"])
+        - (float(profile["table_height_m"]) - float(profile["reference_table_height_m"])),
+        float(profile["expected_plane_distance_m"]),
+        abs_tol=1e-12,
+    ):
+        raise ValueError("showcase site plane distance direction mismatch")
 
 
 def decide_pick_continuation(

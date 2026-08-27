@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Fail-closed competition transaction: goal3 -> perceive once -> pick -> verify -> goal4 -> place.
+# Competition transaction with fail-closed hardware gates and truthful showcase continuation.
 set -Eeuo pipefail
 
 RAC_SCRIPTS="${RAC_SCRIPTS:-$HOME/scripts}"
@@ -20,6 +20,7 @@ FIXED_TABLE_HEIGHT_MM="${FIXED_TABLE_HEIGHT_MM:-650}"
 ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-0}"
 ALLOW_FIXED_XY_FALLBACK="${ALLOW_FIXED_XY_FALLBACK:-0}"
 FORCE_FIXED_TARGET="${FORCE_FIXED_TARGET:-0}"
+COMPETITION_SHOWCASE_CONTINUE="${COMPETITION_SHOWCASE_CONTINUE:-1}"
 GROUND_PLANE_MAX_DELTA_MM="${GROUND_PLANE_MAX_DELTA_MM:-25}"
 TARGET_TIMEOUT_SEC="${TARGET_TIMEOUT_SEC:-30}"
 
@@ -36,10 +37,13 @@ NAV_GOAL4="${COMPETITION_NAV_GOAL4:-goal4_back}"
 TRANSACTION_ID="${COMPETITION_TRANSACTION_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
 LOG_DIR="${LOG_DIR:-$HOME/temp/deyes/competition/$TRANSACTION_ID}"
 TARGET_JSON="$LOG_DIR/target.json"
+SHOWCASE_TARGET_JSON="$LOG_DIR/showcase_target.json"
 ADMISSION_JSON="$LOG_DIR/admission.json"
 GRASP_JSON="$LOG_DIR/grasp_verification.json"
 GRASP_FEEDBACK_JSON="$LOG_DIR/grasp_feedback.json"
+PICK_DECISION_JSON="$LOG_DIR/pick_decision.json"
 PLACE_JSON="$LOG_DIR/place.json"
+TRANSACTION_RESULT_JSON="$LOG_DIR/transaction_result.json"
 TRACE_JSONL="$LOG_DIR/trace.jsonl"
 mkdir -p "$LOG_DIR"
 
@@ -51,6 +55,19 @@ VISION_PID=""
 NAV_PID=""
 TARGET_PID=""
 TARGET_SNAPSHOT_PID=""
+TARGET_SOURCE="none"
+EXECUTION_TARGET_JSON=""
+DEGRADED_REASONS=""
+COMPETITION_SUCCESS=0
+PICK_COMPETITION_VERIFIED=0
+SHOWCASE_COMPLETE=0
+OBJECT_GRASP_VERIFIED=0
+PICK_MOTION_COMPLETED=0
+TRANSPORT_POSE_REACHED=0
+GOAL4_COMPLETED=0
+PLACE_MOTION_COMPLETED=0
+HARD_STOP_REASON=""
+COMMANDS_EMITTED=0
 
 resolve_deyes_python_site() {
   local python_root
@@ -81,21 +98,95 @@ with open(sys.argv[1], "a", encoding="utf-8") as stream:
 PY
 }
 
-die() { trace "stop" "failed" "$*" || true; printf '[race] STOP: %s (logs=%s)\n' "$*" "$LOG_DIR" >&2; exit 1; }
+add_degraded_reason() {
+  local reason="$1"
+  DEGRADED_REASONS+="${DEGRADED_REASONS:+$'\n'}$reason"
+}
+
+write_transaction_result() {
+  TX_RESULT="$TRANSACTION_RESULT_JSON" TX_ID="$TRANSACTION_ID" SHOWCASE_MODE="$COMPETITION_SHOWCASE_CONTINUE" \
+    COMPETITION_OK="$COMPETITION_SUCCESS" SHOWCASE_OK="$SHOWCASE_COMPLETE" OBJECT_OK="$OBJECT_GRASP_VERIFIED" \
+    TARGET_KIND="$TARGET_SOURCE" PICK_OK="$PICK_MOTION_COMPLETED" TRANSPORT_OK="$TRANSPORT_POSE_REACHED" \
+    GOAL4_OK="$GOAL4_COMPLETED" PLACE_OK="$PLACE_MOTION_COMPLETED" DEGRADED="$DEGRADED_REASONS" \
+    HARD_STOP="$HARD_STOP_REASON" COMMANDS_SENT="$COMMANDS_EMITTED" "$PYTHON_BIN" - <<'PY'
+import json, os, pathlib
+
+def flag(name): return os.environ[name] == "1"
+payload = {
+    "schema": "competition_transaction_result/v1",
+    "transaction_id": os.environ["TX_ID"],
+    "showcase_mode": flag("SHOWCASE_MODE"),
+    "competition_success": flag("COMPETITION_OK"),
+    "showcase_complete": flag("SHOWCASE_OK"),
+    "object_grasp_verified": flag("OBJECT_OK"),
+    "target_source": os.environ["TARGET_KIND"],
+    "pick_motion_completed": flag("PICK_OK"),
+    "transport_pose_reached": flag("TRANSPORT_OK"),
+    "goal4_completed": flag("GOAL4_OK"),
+    "place_motion_completed": flag("PLACE_OK"),
+    "degraded_reasons": [value for value in os.environ["DEGRADED"].splitlines() if value],
+    "hard_stop_reason": os.environ["HARD_STOP"] or None,
+    "commands_emitted": flag("COMMANDS_SENT"),
+}
+if payload["competition_success"] and not (payload["showcase_complete"] and payload["object_grasp_verified"]):
+    raise SystemExit("invalid competition success terminal state")
+if payload["showcase_complete"] and not all(payload[name] for name in (
+        "pick_motion_completed", "transport_pose_reached", "goal4_completed", "place_motion_completed")):
+    raise SystemExit("invalid showcase completion terminal state")
+pathlib.Path(os.environ["TX_RESULT"]).write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+PY
+}
+
+die() {
+  HARD_STOP_REASON="$*"
+  write_transaction_result || true
+  trace "stop" "failed" "$*" || true
+  printf '[race] STOP: %s (logs=%s)\n' "$*" "$LOG_DIR" >&2
+  exit 1
+}
 bool01() { [[ "$2" == 0 || "$2" == 1 ]] || die "$1 must be 0 or 1"; }
 need_file() { [[ -f "$1" ]] || die "missing file: $1"; }
+
+select_showcase_target() {
+  local reason="$1"
+  [[ "$COMPETITION_SHOWCASE_CONTINUE" == 1 ]] || die "$reason"
+  if ! SHOWCASE_REASON="$reason" SHOWCASE_OUTPUT="$SHOWCASE_TARGET_JSON" SHOWCASE_SITE="$SITE_METADATA_PATH" "$PYTHON_BIN" - <<'PY'
+import json, os, pathlib
+import yaml
+from deyes_stereo.competition_showcase_contract import (
+    build_showcase_target,
+    classify_showcase_failure,
+    runtime_perception_failure_code,
+    validate_showcase_site,
+)
+failure_code = runtime_perception_failure_code(os.environ["SHOWCASE_REASON"])
+if classify_showcase_failure(failure_code, showcase_enabled=True) != "continue_showcase":
+    raise SystemExit(f"showcase policy hard stop:{failure_code}")
+validate_showcase_site(yaml.safe_load(pathlib.Path(os.environ["SHOWCASE_SITE"]).read_text(encoding="utf-8")))
+payload = build_showcase_target(os.environ["SHOWCASE_REASON"])
+assert payload["schema"] == "competition_showcase_target/v1"
+pathlib.Path(os.environ["SHOWCASE_OUTPUT"]).write_text(json.dumps(payload, indent=2, sort_keys=True)+"\n", encoding="utf-8")
+PY
+  then
+    die "showcase target contract failed:$reason"
+  fi
+  TARGET_SOURCE="fixed_marker_showcase"
+  EXECUTION_TARGET_JSON="$SHOWCASE_TARGET_JSON"
+  add_degraded_reason "$reason"
+  trace "showcase_target" "degraded" "reason=$reason marker_xy_mm=[400,10] sensor_target_available=false"
+}
 
 terminate_pid() {
   local pid="${1:-}" signal_name="${2:-process}"
   [[ -n "$pid" ]] || return 0
   if kill -0 "$pid" 2>/dev/null; then
     kill -INT "$pid" 2>/dev/null || true
-    for _ in $(seq 1 30); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
+    for _ in $(seq 1 "${PROCESS_INT_POLLS:-30}"); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
   fi
   if kill -0 "$pid" 2>/dev/null; then
     trace "$signal_name" "stop_escalated" "SIGTERM pid=$pid"
     kill -TERM "$pid" 2>/dev/null || true
-    for _ in $(seq 1 20); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
+    for _ in $(seq 1 "${PROCESS_TERM_POLLS:-20}"); do kill -0 "$pid" 2>/dev/null || break; sleep .1; done
   fi
   if kill -0 "$pid" 2>/dev/null; then
     trace "$signal_name" "stop_escalated" "SIGKILL pid=$pid"
@@ -125,6 +216,8 @@ cleanup() {
   if [[ -n "$NAV_PID" ]]; then terminate_pid "$NAV_PID" navigation_launch; NAV_PID=""; fi
 }
 on_signal() {
+  HARD_STOP_REASON="signal:$1"
+  write_transaction_result || true
   trace "signal" "interrupted" "$1" || true
   trap - INT TERM
   exit "$2"
@@ -325,8 +418,15 @@ validate_place() {
   PLACE_FILE="$PLACE_JSON" "$PYTHON_BIN" - <<'PY'
 import json, os, pathlib
 data = json.loads(pathlib.Path(os.environ["PLACE_FILE"]).read_text(encoding="utf-8"))
-if data.get("schema") != "competition_place_execution/v1" or data.get("success") is not True:
+if (data.get("schema") != "competition_place_execution/v1" or data.get("success") is not True
+        or data.get("motion_completed") is not True):
     raise SystemExit("place completion result is not successful")
+state=data.get("object_state")
+if state not in ("verified","unverified"): raise SystemExit("place object_state is invalid")
+if data.get("object_delivery_verified") is not (state=="verified"):
+    raise SystemExit("place object delivery truth mismatch")
+if state=="unverified" and data.get("showcase_mode") is not True:
+    raise SystemExit("unverified place requires showcase mode")
 PY
 }
 
@@ -344,6 +444,7 @@ esac
 bool01 ALLOW_BBOX_CENTER "$ALLOW_BBOX_CENTER"
 bool01 ALLOW_FIXED_XY_FALLBACK "$ALLOW_FIXED_XY_FALLBACK"
 bool01 FORCE_FIXED_TARGET "$FORCE_FIXED_TARGET"
+bool01 COMPETITION_SHOWCASE_CONTINUE "$COMPETITION_SHOWCASE_CONTINUE"
 [[ "$ALLOW_FIXED_XY_FALLBACK" == "$FORCE_FIXED_TARGET" ]] || die "fixed XY fallback and FORCE_FIXED_TARGET must be enabled together"
 [[ "$FIXED_TABLE_HEIGHT_MM" == "650" ]] || die "FIXED_TABLE_HEIGHT_MM is competition-locked to 650"
 need_file "$CALIB_PATH"; need_file "$PROJECTOR_PATH"; need_file "$DETECTOR_CONFIG"; need_file "$SITE_METADATA_PATH"
@@ -353,7 +454,7 @@ need_file "$TARGET_ADAPTER"; need_file "$GRASP_FEEDBACK_ADAPTER"
 validate_engine_manifest || die "engine sidecar validation failed"
 trace "transaction" "started" "log_dir=$LOG_DIR"
 
-source_ros1
+source_ros1 || die "ROS1 environment setup failed"
 if ! rostopic list 2>/dev/null | grep -qx /move_base/goal; then
   roslaunch turn_on_mercury_robot navigation.launch >"$LOG_DIR/navigation.log" 2>&1 & NAV_PID=$!
   ready=0
@@ -363,10 +464,11 @@ if ! rostopic list 2>/dev/null | grep -qx /move_base/goal; then
   done
   [[ "$ready" == 1 ]] || die "move_base unavailable"
 fi
+COMMANDS_EMITTED=1
 run_step nav_goal3 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL3" || die "navigation goal3 failed"
 run_step set_head "$PYTHON_BIN" "$RAC_SCRIPTS/set_venue_head.py" || die "head command/feedback failed"
 
-source_ros2
+source_ros2 || die "ROS2 environment setup failed"
 ros2 launch deyes_bringup imx219_stereo.launch.py \
   use_cpp_capture:=true width:=640 height:=360 fps:=30 swap_left_right:=true \
   calib_path:="$CALIB_PATH" enable_cuda_depth:=true cuda_depth_publish_debug_rect:=true \
@@ -377,40 +479,60 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
   detector_expected_class_count:=1 detector_expected_max_targets:=1 enable_pen_features:=true \
   >"$LOG_DIR/vision.log" 2>&1 & VISION_PID=$!
 sleep "${VISION_STARTUP_SEC:-5}"
-kill -0 "$VISION_PID" 2>/dev/null || { tail -n 60 "$LOG_DIR/vision.log" >&2 || true; die "vision launch exited"; }
-trace "vision" "ready" "pid=$VISION_PID"
+if kill -0 "$VISION_PID" 2>/dev/null; then
+  trace "vision" "ready" "pid=$VISION_PID"
 
-bbox_bool=false; fixed_xy_bool=false; force_bool=false
-[[ "$ALLOW_BBOX_CENTER" == 1 ]] && bbox_bool=true
-[[ "$ALLOW_FIXED_XY_FALLBACK" == 1 ]] && fixed_xy_bool=true
-[[ "$FORCE_FIXED_TARGET" == 1 ]] && force_bool=true
-export FORCE_FIXED_TARGET
-trace "competition_target" "started" "topic=$TARGET_TOPIC"
-"$PYTHON_BIN" "$TARGET_ADAPTER" --topic "$TARGET_TOPIC" --output "$TARGET_JSON" --timeout "$TARGET_TIMEOUT_SEC" \
-  >"$LOG_DIR/competition_target.log" 2>&1 & TARGET_SNAPSHOT_PID=$!
-sleep "${TARGET_SUBSCRIBER_READY_SEC:-0.5}"
-ros2 run "$TARGET_PACKAGE" "$TARGET_EXECUTABLE" --ros-args \
-  -p venue_profile_path:="$SITE_METADATA_PATH" -p projector_path:="$PROJECTOR_PATH" -p fixed_table_height_m:="0.650" \
-  -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
-  -p force_fixed_target:="$force_bool" >"$LOG_DIR/competition_target_node.log" 2>&1 & TARGET_PID=$!
-sleep "${TARGET_STARTUP_SEC:-2}"
-kill -0 "$TARGET_PID" 2>/dev/null || { tail -n 40 "$LOG_DIR/competition_target_node.log" >&2 || true; die "competition target node exited"; }
-if wait "$TARGET_SNAPSHOT_PID"; then
-  TARGET_SNAPSHOT_PID=""; trace "competition_target" "ok" ""
+  bbox_bool=false; fixed_xy_bool=false; force_bool=false
+  [[ "$ALLOW_BBOX_CENTER" == 1 ]] && bbox_bool=true
+  [[ "$ALLOW_FIXED_XY_FALLBACK" == 1 ]] && fixed_xy_bool=true
+  [[ "$FORCE_FIXED_TARGET" == 1 ]] && force_bool=true
+  export FORCE_FIXED_TARGET
+  trace "competition_target" "started" "topic=$TARGET_TOPIC"
+  "$PYTHON_BIN" "$TARGET_ADAPTER" --topic "$TARGET_TOPIC" --output "$TARGET_JSON" --timeout "$TARGET_TIMEOUT_SEC" \
+    >"$LOG_DIR/competition_target.log" 2>&1 & TARGET_SNAPSHOT_PID=$!
+  sleep "${TARGET_SUBSCRIBER_READY_SEC:-0.5}"
+  ros2 run "$TARGET_PACKAGE" "$TARGET_EXECUTABLE" --ros-args \
+    -p venue_profile_path:="$SITE_METADATA_PATH" -p projector_path:="$PROJECTOR_PATH" -p fixed_table_height_m:="0.650" \
+    -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
+    -p force_fixed_target:="$force_bool" >"$LOG_DIR/competition_target_node.log" 2>&1 & TARGET_PID=$!
+  sleep "${TARGET_STARTUP_SEC:-2}"
+  if ! kill -0 "$TARGET_PID" 2>/dev/null; then
+    tail -n 40 "$LOG_DIR/competition_target_node.log" >&2 || true
+    terminate_pid "$TARGET_SNAPSHOT_PID" target_snapshot_adapter
+    TARGET_SNAPSHOT_PID=""
+    target_detail="$(tail -n 1 "$LOG_DIR/competition_target_node.log" 2>/dev/null || true)"
+    select_showcase_target "competition_target_node_exited:${target_detail:-no_detail}"
+  elif wait "$TARGET_SNAPSHOT_PID"; then
+    TARGET_SNAPSHOT_PID=""
+    TARGET_SOURCE="live_competition_target"
+    EXECUTION_TARGET_JSON="$TARGET_JSON"
+    trace "competition_target" "ok" ""
+  else
+    rc=$?; TARGET_SNAPSHOT_PID=""
+    target_detail="$(tail -n 1 "$LOG_DIR/competition_target.log" 2>/dev/null || true)"
+    trace "competition_target" "failed" "rc=$rc detail=$target_detail"
+    select_showcase_target "competition_target_failed:rc=$rc:${target_detail:-no_detail}"
+  fi
 else
-  rc=$?; TARGET_SNAPSHOT_PID=""; tail -n 40 "$LOG_DIR/competition_target.log" >&2 || true
-  trace "competition_target" "failed" "rc=$rc"
-  die "competition target snapshot failed (placeholder/waiting payloads are not executable)"
+  tail -n 60 "$LOG_DIR/vision.log" >&2 || true
+  wait "$VISION_PID" 2>/dev/null || true
+  VISION_PID=""
+  select_showcase_target "runtime_vision_launch_exited"
 fi
-need_file "$TARGET_JSON"
-validate_target_and_write_admission || die "target/ground-plane admission failed"
-trace "admission" "ok" "$(tr -d '\n' < "$ADMISSION_JSON")"
-if [[ "$FORCE_FIXED_TARGET" == 1 ]]; then
-  trace "degraded" "active" "operator asserted pen is manually placed at marker_xy_mm=[400,10]; random XY disabled"
+
+if [[ "$TARGET_SOURCE" == "live_competition_target" ]]; then
+  need_file "$TARGET_JSON"
+  validate_target_and_write_admission || die "target/ground-plane admission failed"
+  trace "admission" "ok" "$(tr -d '\n' < "$ADMISSION_JSON")"
+  if [[ "$FORCE_FIXED_TARGET" == 1 ]]; then
+    trace "degraded" "active" "operator asserted pen is manually placed at marker_xy_mm=[400,10]; random XY disabled"
+  fi
+else
+  printf '{"accepted":true,"mode":"fixed_marker_showcase","sensor_target_available":false}\n' >"$ADMISSION_JSON"
 fi
 stop_target
 
-mapfile -t pick_xy < <(TARGET_FILE="$TARGET_JSON" "$PYTHON_BIN" - <<'PY'
+mapfile -t pick_xy < <(TARGET_FILE="$EXECUTION_TARGET_JSON" "$PYTHON_BIN" - <<'PY'
 import json,os,pathlib
 d=json.loads(pathlib.Path(os.environ['TARGET_FILE']).read_text())
 sdk=d.get('right_arm_sdk_target_m')
@@ -422,19 +544,70 @@ else:
 PY
 )
 [[ "${#pick_xy[@]}" == 2 ]] || die "target XY extraction failed"
-run_step pick "$PYTHON_BIN" "$PICK_SCRIPT" --x-mm "${pick_xy[0]}" --y-mm "${pick_xy[1]}" \
-  --venue-profile "$SITE_METADATA_PATH" --target-json "$TARGET_JSON" \
-  --feedback-adapter "$GRASP_FEEDBACK_ADAPTER" --feedback-json "$GRASP_FEEDBACK_JSON" \
-  --result-json "$GRASP_JSON" || die "pick command/serial/feedback failed"
+pick_args=(--x-mm "${pick_xy[0]}" --y-mm "${pick_xy[1]}" --venue-profile "$SITE_METADATA_PATH" --result-json "$GRASP_JSON")
+if [[ "$TARGET_SOURCE" == "fixed_marker_showcase" ]]; then
+  pick_args+=(--showcase-target-json "$SHOWCASE_TARGET_JSON")
+else
+  pick_args+=(--target-json "$TARGET_JSON" --feedback-adapter "$GRASP_FEEDBACK_ADAPTER" --feedback-json "$GRASP_FEEDBACK_JSON")
+fi
+pick_rc=0
+run_step pick "$PYTHON_BIN" "$PICK_SCRIPT" "${pick_args[@]}" || pick_rc=$?
 need_file "$GRASP_JSON"
-validate_grasp || die "grasp verification failed"
-trace "grasp_verification" "ok" "success=true navigation_permitted=true"
+if ! PICK_FILE="$GRASP_JSON" DECISION_FILE="$PICK_DECISION_JSON" SHOWCASE_ENABLED="$COMPETITION_SHOWCASE_CONTINUE" \
+  "$PYTHON_BIN" - <<'PY'
+import json, os, pathlib
+from deyes_stereo.competition_showcase_contract import decide_pick_continuation
+result=json.loads(pathlib.Path(os.environ["PICK_FILE"]).read_text(encoding="utf-8"))
+decision=decide_pick_continuation(result, showcase_enabled=os.environ["SHOWCASE_ENABLED"]=="1")
+pathlib.Path(os.environ["DECISION_FILE"]).write_text(json.dumps(decision,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+PY
+then
+  die "pick result classification failed"
+fi
+mapfile -t pick_decision < <(PICK_FILE="$GRASP_JSON" DECISION_FILE="$PICK_DECISION_JSON" "$PYTHON_BIN" - <<'PY'
+import json,os,pathlib
+result=json.loads(pathlib.Path(os.environ["PICK_FILE"]).read_text())
+decision=json.loads(pathlib.Path(os.environ["DECISION_FILE"]).read_text())
+print(decision["action"])
+print(1 if decision["competition_success"] else 0)
+print(1 if decision["object_grasp_verified"] else 0)
+print(decision.get("degraded_reason") or "")
+print(1 if result.get("motion_completed") is True else 0)
+print(1 if result.get("transport_pose_reached") is True else 0)
+PY
+)
+[[ "${#pick_decision[@]}" == 6 ]] || die "pick decision output malformed"
+[[ "${pick_decision[0]}" != stop ]] || die "pick hard failure:rc=$pick_rc:${pick_decision[3]}"
+PICK_COMPETITION_VERIFIED="${pick_decision[1]}"
+OBJECT_GRASP_VERIFIED="${pick_decision[2]}"
+PICK_MOTION_COMPLETED="${pick_decision[4]}"
+TRANSPORT_POSE_REACHED="${pick_decision[5]}"
+if [[ "${pick_decision[0]}" == continue_showcase ]]; then
+  add_degraded_reason "${pick_decision[3]}"
+  trace "grasp_verification" "degraded_continue" "navigation_permitted=false showcase_continuation=true reason=${pick_decision[3]}"
+else
+  trace "grasp_verification" "ok" "success=true navigation_permitted=true"
+fi
 stop_vision
 
-source_ros1
+source_ros1 || die "ROS1 environment restore failed before goal4"
 run_step nav_goal4 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL4" || die "navigation goal4 failed"
-run_step place "$PYTHON_BIN" "$PLACE_SCRIPT" --venue-profile "$SITE_METADATA_PATH" --result-json "$PLACE_JSON" || die "place command/serial/feedback failed"
+GOAL4_COMPLETED=1
+object_state=unverified
+[[ "$OBJECT_GRASP_VERIFIED" == 1 ]] && object_state=verified
+place_args=(--venue-profile "$SITE_METADATA_PATH" --object-state "$object_state" --result-json "$PLACE_JSON")
+[[ "$COMPETITION_SHOWCASE_CONTINUE" == 1 ]] && place_args+=(--showcase-mode)
+run_step place "$PYTHON_BIN" "$PLACE_SCRIPT" "${place_args[@]}" || die "place command/serial/feedback failed"
 need_file "$PLACE_JSON"
 validate_place || die "place completion validation failed"
-trace "transaction" "complete" ""
-printf '[race] COMPLETE transaction=%s logs=%s\n' "$TRANSACTION_ID" "$LOG_DIR"
+PLACE_MOTION_COMPLETED=1
+SHOWCASE_COMPLETE=1
+COMPETITION_SUCCESS="$PICK_COMPETITION_VERIFIED"
+write_transaction_result || die "transaction result serialization failed"
+trace "transaction" "complete" "competition_success=$COMPETITION_SUCCESS showcase_complete=true"
+if [[ "$COMPETITION_SUCCESS" == 1 ]]; then
+  printf '[race] COMPLETE transaction=%s logs=%s\n' "$TRANSACTION_ID" "$LOG_DIR"
+else
+  printf '[race] SHOWCASE COMPLETE transaction=%s logs=%s\n' "$TRANSACTION_ID" "$LOG_DIR"
+  printf '[race] COMPETITION SUCCESS: false (object was not verified; see %s)\n' "$TRANSACTION_RESULT_JSON"
+fi

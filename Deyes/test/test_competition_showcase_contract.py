@@ -10,8 +10,13 @@ sys.path.insert(0, str(ROOT / "src" / "deyes_stereo"))
 from deyes_stereo.competition_showcase_contract import (  # noqa: E402
     build_transaction_result,
     build_showcase_target,
+    classify_showcase_failure,
     decide_pick_continuation,
+    runtime_perception_failure_code,
+    validate_showcase_site,
 )
+import pytest
+import yaml
 
 
 def test_runtime_perception_failure_builds_truthful_fixed_marker_showcase_target() -> None:
@@ -113,3 +118,70 @@ def test_completed_empty_showcase_has_dual_truthful_status() -> None:
     assert result["object_grasp_verified"] is False
     assert result["commands_emitted"] is True
     assert result["hard_stop_reason"] is None
+
+
+def test_showcase_fixed_marker_requires_the_locked_650mm_site_truth() -> None:
+    profile = yaml.safe_load(
+        (ROOT / "config/stereo/competition_venue_65cm.yaml").read_text()
+    )
+    validate_showcase_site(profile)
+
+    profile["table_height_m"] = 0.676
+    with pytest.raises(ValueError, match="table_height_m"):
+        validate_showcase_site(profile)
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "runtime_camera_exit",
+        "runtime_cuda_exit",
+        "runtime_yolo_exit",
+        "target_timeout",
+        "target_zero_objects",
+        "target_multiple_objects",
+        "exact_stamp_mismatch",
+        "depth_invalid",
+        "camera_info_invalid",
+        "pen_feature_invalid",
+        "pnp_rejected",
+        "roi_verification_unavailable",
+        "object_not_verified",
+    ],
+)
+def test_recoverable_failure_matrix_continues_only_when_showcase_enabled(
+    failure_code: str,
+) -> None:
+    assert classify_showcase_failure(failure_code, showcase_enabled=True) == "continue_showcase"
+    assert classify_showcase_failure(failure_code, showcase_enabled=False) == "hard_stop"
+
+
+@pytest.mark.parametrize(
+    "failure_code",
+    [
+        "deployment_preflight",
+        "healthy_plane_deviation_over_25mm",
+        "navigation_goal3",
+        "navigation_goal4",
+        "head_feedback",
+        "collision_clearance",
+        "serial",
+        "power",
+        "robot_state",
+        "gripper_feedback_missing",
+        "gripper_feedback_unstable",
+        "pose_feedback_timeout",
+        "motion_command",
+        "unknown_failure",
+    ],
+)
+def test_hard_failure_matrix_never_continues_showcase(failure_code: str) -> None:
+    assert classify_showcase_failure(failure_code, showcase_enabled=True) == "hard_stop"
+
+
+def test_healthy_plane_rejection_cannot_be_normalized_as_recoverable_perception() -> None:
+    code = runtime_perception_failure_code(
+        "target rejected: table_height_deviation_exceeds_25mm"
+    )
+    assert code == "healthy_plane_deviation_over_25mm"
+    assert classify_showcase_failure(code, showcase_enabled=True) == "hard_stop"

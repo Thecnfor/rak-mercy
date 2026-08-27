@@ -398,6 +398,7 @@ def main() -> int:
     parser.add_argument("--run", action="store_true")
     parser.add_argument("--allow-fixed-xy-fallback", action="store_true")
     parser.add_argument("--force-fixed-target", action="store_true")
+    parser.add_argument("--strict-result-gates", action="store_true")
     parser.add_argument("--vision-dry-run-seconds", type=int, default=int(os.environ.get("DEYES_DEPLOY_VISION_SECONDS", "30")))
     args = parser.parse_args()
     if args.force_fixed_target != args.allow_fixed_xy_fallback:
@@ -433,6 +434,7 @@ def main() -> int:
         env = ["FIXED_TABLE_HEIGHT_MM=650", "ALLOW_BBOX_CENTER=0"]
         env.append(f"ALLOW_FIXED_XY_FALLBACK={int(args.allow_fixed_xy_fallback)}")
         env.append(f"FORCE_FIXED_TARGET={int(args.force_fixed_target)}")
+        env.append(f"COMPETITION_SHOWCASE_CONTINUE={int(not args.strict_result_gates)}")
         run(ssh, " ".join(env) + f" DEYES_WS={shlex.quote(args.remote_home + '/deyes_competition_ws')} bash {shlex.quote(args.remote_home + '/scripts/race_onekey_try.sh')}")
     else:
         print("DEPLOY_OK: live vision dry-run passed; no arm motion was requested.")

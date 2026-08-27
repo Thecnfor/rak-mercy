@@ -3,7 +3,8 @@ param(
   [switch]$Run,
   [switch]$StopExisting,
   [switch]$AllowFixedXyFallback,
-  [switch]$ForceFixedTarget
+  [switch]$ForceFixedTarget,
+  [switch]$StrictResultGates
 )
 $ErrorActionPreference = "Stop"
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -12,4 +13,5 @@ if ($Run) { $argsList += "--run" }
 if ($StopExisting) { $argsList += "--stop-existing" }
 if ($AllowFixedXyFallback) { $argsList += "--allow-fixed-xy-fallback" }
 if ($ForceFixedTarget) { $argsList += "--force-fixed-target" }
+if ($StrictResultGates) { $argsList += "--strict-result-gates" }
 py @argsList

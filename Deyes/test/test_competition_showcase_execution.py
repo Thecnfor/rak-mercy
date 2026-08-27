@@ -6,13 +6,17 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
 import yaml
 
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "Deyes/src/deyes_stereo"))
 
-from deyes_stereo.competition_showcase_contract import build_showcase_target  # noqa: E402
+from deyes_stereo.competition_showcase_contract import (  # noqa: E402
+    build_showcase_target,
+    decide_pick_continuation,
+)
 
 
 def _load_script(name: str):
@@ -160,3 +164,57 @@ def test_sensor_verified_pick_keeps_navigation_permission_truthful(
     assert result["success"] is True
     assert result["navigation_permitted"] is True
     assert result["verification_failure_class"] is None
+
+
+@pytest.mark.parametrize("fault", ["collision", "serial", "gripper_feedback", "pose_motion"])
+def test_hardware_faults_never_become_showcase_continuations(
+    fault: str, tmp_path: Path, monkeypatch,
+) -> None:
+    script = _load_script("pick_pen_degraded.py")
+    profile = yaml.safe_load(
+        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
+    )
+    profile["transport"].update({
+        "transport_validated": True,
+        "kinematics_validated": True,
+        "collision_clearance_validated": fault != "collision",
+        "tcp_vertical_clearance_conservative_mm": 0.0 if fault == "collision" else 10.0,
+    })
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    target_path = tmp_path / "showcase-target.json"
+    target_path.write_text(json.dumps(build_showcase_target("target_timeout")), encoding="utf-8")
+    result_path = tmp_path / "pick-result.json"
+    constructed = False
+
+    def mercury_factory(*_args):
+        nonlocal constructed
+        constructed = True
+        if fault == "serial":
+            raise OSError("serial_open_failed")
+        feedback = [10.0, 14.0, 10.0] if fault == "gripper_feedback" else [10.0] * 6
+        return FakeMercury(feedback)
+
+    monkeypatch.setitem(sys.modules, "pymycobot", SimpleNamespace(Mercury=mercury_factory))
+    if fault == "pose_motion":
+        class FailingExecutor:
+            def __init__(self, *_args, **_kwargs) -> None: pass
+            def pick(self, *_args, **_kwargs): raise RuntimeError("pose_timeout")
+
+        monkeypatch.setattr(script, "Mercury650Executor", FailingExecutor)
+    monkeypatch.setattr(script.time, "sleep", lambda _: None)
+    monkeypatch.setattr(sys, "argv", [
+        "pick_pen_degraded.py",
+        "--venue-profile", str(profile_path),
+        "--showcase-target-json", str(target_path),
+        "--result-json", str(result_path),
+    ])
+
+    assert script.main() == 2
+    result = json.loads(result_path.read_text(encoding="utf-8"))
+    assert result["hardware_ok"] is False
+    assert result["transport_pose_reached"] is False
+    assert result["verification_failure_class"] == "hardware"
+    assert decide_pick_continuation(result, showcase_enabled=True)["action"] == "stop"
+    if fault == "collision":
+        assert constructed is False
