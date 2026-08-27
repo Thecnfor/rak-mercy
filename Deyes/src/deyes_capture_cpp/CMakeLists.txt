@@ -14,8 +14,6 @@ find_package(OpenCV REQUIRED COMPONENTS
   core
   imgproc
   calib3d
-  aruco
-  objdetect
   cudaimgproc
   cudawarping
   cudafilters

@@ -52,7 +52,7 @@ elephant_imx219stereo_640x360_20260820.yaml
 `camera_pair_id`、`img_size`、明确记录的 `board_inner_corners`（本轮 `[9, 6]`）、`square_size_m`、
 `reproj_rms_px`、`epipolar_p95_px`、`date`、`source` 与 `validated`。物理标定前上述测量
 字段必须保留为 `null`，且 `validated: false`；不得填入推导或猜测的误差数值。只有
-`source: physical_checkerboard` 或 `source: physical_charuco` 的实测 YAML 才可以设置 `validated: true`；其他来源一律拒绝。ChArUco 板身份、共同角点统计和 10 ms 时间偏差必须一并保存。
+`source: physical_checkerboard` 的实测 YAML 才可以设置 `validated: true`。
 
 `validated: true` 时运行分辨率必须严格等于 `img_size`（本轮为 `640x360`）。未验证 YAML 仅可用于 debug，节点会
 按 `scale_x/scale_y` 缩放原始 K 后重新计算校正映射，不能作为抓取距离真源。

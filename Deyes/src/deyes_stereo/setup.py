@@ -49,8 +49,6 @@ setup(
             "motion_interface_probe = deyes_stereo.motion_interface_probe_node:main",
             "pen_feature = deyes_stereo.pen_feature_node:main",
             "physical_stereo_calibration = deyes_stereo.physical_stereo_calibration:main",
-            "charuco_board_generator = deyes_stereo.charuco_board_generator:main",
-            "charuco_handeye = deyes_stereo.charuco_handeye:main",
             "stereo_calibration_gui = deyes_stereo.stereo_calibration_gui:main",
             "stereo_acceptance = deyes_stereo.stereo_acceptance:main",
             "runtime_acceptance_monitor = deyes_stereo.runtime_acceptance_monitor:main",

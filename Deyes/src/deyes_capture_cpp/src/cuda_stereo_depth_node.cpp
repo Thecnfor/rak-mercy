@@ -369,8 +369,8 @@ StereoCalibration CudaStereoDepthNode::load_stereo_calibration(const std::string
   calibration.source = root["source"].as<std::string>();
   calibration.validated = root["validated"].as<bool>();
   if (calibration.validated) {
-    if (calibration.source != "physical_checkerboard" && calibration.source != "physical_charuco") {
-      throw std::runtime_error("validated stereo calibration must use source=physical_checkerboard or physical_charuco");
+    if (calibration.source != "physical_checkerboard") {
+      throw std::runtime_error("validated stereo calibration must use source=physical_checkerboard");
     }
     if (root["square_size_m"].IsNull() || root["reproj_rms_px"].IsNull() || root["epipolar_p95_px"].IsNull()) {
       throw std::runtime_error("validated stereo calibration requires measured board and error metadata");
