@@ -4,7 +4,7 @@ table_height_m: 0.650
 reference_table_height_m: 0.560
 reference_plane_distance_m: 0.559428925
 expected_plane_distance_m: 0.469428925
-expected_plane_distance_rule: "abs(reference_plane_distance_m) - 0.090"
+expected_plane_distance_rule: "reference_plane_distance_m - 0.090"
 touch_plane_z_m: 0.135
 orientation_deg: [179.99, -12.0, 0.0]
 fallbacks:
@@ -40,6 +40,10 @@ transport:
   fk_position_residual_mm: 0.00000000006
   fk_orientation_residual_deg: 0.000000000000002
   joint_limits_passed: true
+  evidence_manifest: "docs/evidence/competition_transport_ik_20260827/manifest.json"
+  tcp_vertical_clearance_nominal_mm: 5.0
+  tcp_vertical_clearance_conservative_mm: 0.0
+  collision_clearance_validated: false
   live_behavior_when_unvalidated: fail_closed
 grasp_verification:
   lifted_height_over_table_m: 0.030

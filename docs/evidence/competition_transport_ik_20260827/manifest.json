@@ -1,0 +1,60 @@
+{
+  "schema": "competition_transport_ik_tcp_evidence/v1",
+  "date": "2026-08-27",
+  "claim_scope": "six_axis_transport_fk_joint_limits_and_nominal_tcp_vertical_clearance",
+  "official_urdf_source": {
+    "repository": "https://github.com/elephantrobotics/mercury_x1_ros2",
+    "commit": "527e1c787c2bd86189de7c8df0f9879380ffd9c5",
+    "raw_url": "https://raw.githubusercontent.com/elephantrobotics/mercury_x1_ros2/527e1c787c2bd86189de7c8df0f9879380ffd9c5/src/mercury_robot_urdf/mercury_robot_urdf/urdf/mercury_x1/mercury_x1.urdf",
+    "sha256": "745075e319bc935beb03d4894ccd5d44fdc92cc3e01c5d56aa9920a3164cfdcd",
+    "fixture_path": "Deyes/test/fixtures/mercury_x1_official_527e1c787c2b.urdf",
+    "fixture_sha256": "aa9d8c94a22716d9f7bafda1902bf7c5768137701be02205cf7ff661f8211716",
+    "fixture_scope": "full_official_urdf",
+    "fixture_derivation": "Official raw source with one terminal LF added by repository text serialization; XML content is otherwise byte-identical."
+  },
+  "transport_ik": {
+    "validator_schema": "competition_transport_ik_validation/v1",
+    "base_frame": "link_body",
+    "tcp_link": "link6_R",
+    "target_pose_mm_deg": [300.0, 10.0, 260.0, 179.99, -12.0, 0.0],
+    "joint_names": ["joint1_R", "joint2_R", "joint3_R", "joint4_R", "joint5_R", "joint6_R"],
+    "joint_solution_rad": [0.9039235121922143, 1.0947778286517673, -0.5541657632173106, -1.4630624027485444, 0.5699777942163569, 1.297798402557579],
+    "fk_xyz_m": [0.30000000000000016, 0.010000000000000245, 0.26000000000000006],
+    "position_residual_mm": 3.010682435483065e-13,
+    "orientation_residual_deg": 0.0,
+    "thresholds": {
+      "position_residual_mm": 5.0,
+      "orientation_residual_deg": 2.0
+    },
+    "joint_limits_passed": true,
+    "joint_limit_evidence": {
+      "joint1_R": {"value_rad": 0.9039235121922143, "lower_rad": -2.879, "upper_rad": 2.879, "inside": true},
+      "joint2_R": {"value_rad": 1.0947778286517673, "lower_rad": -0.8726, "upper_rad": 2.0943, "inside": true},
+      "joint3_R": {"value_rad": -0.5541657632173106, "lower_rad": -2.879, "upper_rad": 2.879, "inside": true},
+      "joint4_R": {"value_rad": -1.4630624027485444, "lower_rad": -2.879, "upper_rad": 0.087, "inside": true},
+      "joint5_R": {"value_rad": 0.5699777942163569, "lower_rad": -2.879, "upper_rad": 2.879, "inside": true},
+      "joint6_R": {"value_rad": 1.297798402557579, "lower_rad": -1.9198, "upper_rad": 3.0543, "inside": true}
+    },
+    "validated": true
+  },
+  "tcp_vertical_clearance": {
+    "claim_type": "nominal_commanded_tcp_z_delta_only",
+    "reference_touch_z_mm": 135.0,
+    "pick_commanded_z_mm": [235.0, 180.0, 140.0, 135.0, 180.0, 235.0],
+    "pick_nominal_mm": [100.0, 45.0, 5.0, 0.0, 45.0, 100.0],
+    "transport_commanded_z_mm": 260.0,
+    "transport_nominal_mm": 125.0,
+    "place_commanded_z_mm": [200.0, 165.0, 200.0, 260.0],
+    "place_nominal_mm": [65.0, 30.0, 65.0, 125.0],
+    "minimum_non_contact_nominal_mm": 5.0,
+    "feedback_xyz_tolerance_mm": 5.0,
+    "conservative_minimum_mm": 0.0
+  },
+  "collision_clearance_validated": false,
+  "limitations": [
+    "The 5 mm minimum is a nominal TCP Z delta at the 140 mm approach stage, not measured physical clearance.",
+    "The 5 mm XYZ feedback tolerance consumes the entire nominal minimum, so the conservative lower bound is 0 mm.",
+    "The URDF references external meshes that are not bundled with this fixture, and this FK validator does not evaluate tool volume, link volume, swept orientation, self-collision, or table collision.",
+    "Positive physical clearance remains a real-robot and full-geometry validation item."
+  ]
+}

@@ -11,6 +11,7 @@ def test_galactic_parameter_file_has_only_node_ros_parameters_and_site_is_split(
     assert site["table_height_m"]==.650 and site["reference_table_height_m"]==.560
     assert site["reference_plane_distance_m"]==.559428925
     assert site["expected_plane_distance_m"]==.469428925
+    assert site["expected_plane_distance_rule"]=="reference_plane_distance_m - 0.090"
     assert site["reference_plane_distance_m"]-(site["table_height_m"]-site["reference_table_height_m"]) == pytest.approx(site["expected_plane_distance_m"])
     assert site["transport"]["transport_validated"] is True
     assert site["transport"]["joint_limits_passed"] is True
