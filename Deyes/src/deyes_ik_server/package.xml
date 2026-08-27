@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>deyes_ik_server</name>
+  <version>0.1.0</version>
+  <description>
+    ROS2 action server implementing deyes_interfaces/action/ExecuteCartesianStage
+    for Mercury X1 7-DOF arms. Backed by ikpy (numerical IK, no manual Jacobian)
+    so the same solver is used offline and on the venue robot.
+  </description>
+  <maintainer email="roborak@example.com">Robo Rak Mercy Team</maintainer>
+  <license>TODO</license>
+
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>sensor_msgs</depend>
+  <depend>tf2_ros</depend>
+  <depend>deyes_interfaces</depend>
+
+  <exec_depend>ikpy</exec_depend>
+  <exec_depend>scipy</exec_depend>
+  <exec_depend>numpy</exec_depend>
+
+  <test_depend>python3-pytest</test_depend>
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>
