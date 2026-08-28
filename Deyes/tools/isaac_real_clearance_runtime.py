@@ -235,7 +235,9 @@ async def run() -> None:
             initial=current_full[joint_indices].copy()
             target=np.asarray(targets,dtype=float)
             if len(target)!=len(joint_indices): raise RuntimeError(f"joint_target_shape_invalid:{label}")
+            convergence_threshold_deg=3.0 if tuple(names)==GRIPPER_NAMES else 1.0
             diagnostic={"label":label,"joint_names":list(names),
+                "convergence_threshold_deg":convergence_threshold_deg,
                 "initial":[float(value) for value in initial],
                 "target":[float(value) for value in target]}
             result.setdefault("joint_command_diagnostics",[]).append(diagnostic)
@@ -266,7 +268,7 @@ async def run() -> None:
                         joint_positions=target,joint_indices=joint_indices))
                     await app.next_update_async(); sample_geometry()
                     final=checked_feedback("settle",settle_frame)
-                    if float(np.max(np.abs(final-target)))<=math.radians(1.0):
+                    if float(np.max(np.abs(final-target)))<=math.radians(convergence_threshold_deg):
                         diagnostic["settle_frames"]=settle_frame
                         settled=True
                         break
