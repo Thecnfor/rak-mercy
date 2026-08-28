@@ -38,11 +38,16 @@ NAV_GOAL4="${COMPETITION_NAV_GOAL4:-goal4_back}"
 TRANSACTION_ID="${COMPETITION_TRANSACTION_ID:-$(date -u +%Y%m%dT%H%M%SZ)_$$}"
 LOG_DIR="${LOG_DIR:-$HOME/temp/deyes/competition/$TRANSACTION_ID}"
 TARGET_JSON="$LOG_DIR/target.json"
+RETRY_TARGET_JSON="$LOG_DIR/retry_target.json"
 SHOWCASE_TARGET_JSON="$LOG_DIR/showcase_target.json"
 ADMISSION_JSON="$LOG_DIR/admission.json"
+RETRY_ADMISSION_JSON="$LOG_DIR/retry_admission.json"
 GRASP_JSON="$LOG_DIR/grasp_verification.json"
 GRASP_FEEDBACK_JSON="$LOG_DIR/grasp_feedback.json"
 PICK_DECISION_JSON="$LOG_DIR/pick_decision.json"
+RETRY_GRASP_JSON="$LOG_DIR/retry_grasp_verification.json"
+RETRY_GRASP_FEEDBACK_JSON="$LOG_DIR/retry_grasp_feedback.json"
+RETRY_PICK_DECISION_JSON="$LOG_DIR/retry_pick_decision.json"
 PLACE_JSON="$LOG_DIR/place.json"
 ARM_STOW_JSON="$LOG_DIR/arm_stow.json"
 TRANSACTION_RESULT_JSON="$LOG_DIR/transaction_result.json"
@@ -65,6 +70,7 @@ PICK_COMPETITION_VERIFIED=0
 SHOWCASE_COMPLETE=0
 OBJECT_GRASP_VERIFIED=0
 PICK_MOTION_COMPLETED=0
+PICK_ATTEMPT_COUNT=0
 TRANSPORT_POSE_REACHED=0
 GOAL4_COMPLETED=0
 PLACE_MOTION_COMPLETED=0
@@ -110,7 +116,7 @@ write_transaction_result() {
     COMPETITION_OK="$COMPETITION_SUCCESS" SHOWCASE_OK="$SHOWCASE_COMPLETE" OBJECT_OK="$OBJECT_GRASP_VERIFIED" \
     TARGET_KIND="$TARGET_SOURCE" PICK_OK="$PICK_MOTION_COMPLETED" TRANSPORT_OK="$TRANSPORT_POSE_REACHED" \
     GOAL4_OK="$GOAL4_COMPLETED" PLACE_OK="$PLACE_MOTION_COMPLETED" DEGRADED="$DEGRADED_REASONS" \
-    HARD_STOP="$HARD_STOP_REASON" COMMANDS_SENT="$COMMANDS_EMITTED" "$PYTHON_BIN" - <<'PY'
+    HARD_STOP="$HARD_STOP_REASON" COMMANDS_SENT="$COMMANDS_EMITTED" PICK_ATTEMPTS="$PICK_ATTEMPT_COUNT" "$PYTHON_BIN" - <<'PY'
 import json, os, pathlib
 
 def flag(name): return os.environ[name] == "1"
@@ -129,7 +135,10 @@ payload = {
     "degraded_reasons": [value for value in os.environ["DEGRADED"].splitlines() if value],
     "hard_stop_reason": os.environ["HARD_STOP"] or None,
     "commands_emitted": flag("COMMANDS_SENT"),
+    "pick_attempt_count": int(os.environ["PICK_ATTEMPTS"]),
 }
+if payload["pick_attempt_count"] not in (0, 1, 2):
+    raise SystemExit("invalid pick attempt count")
 if payload["competition_success"] and not (payload["showcase_complete"] and payload["object_grasp_verified"]):
     raise SystemExit("invalid competition success terminal state")
 if payload["showcase_complete"] and not all(payload[name] for name in (
@@ -323,9 +332,11 @@ PY
 }
 
 validate_target_and_write_admission() {
-  TARGET_FILE="$TARGET_JSON" ADMISSION_FILE="$ADMISSION_JSON" FIXED_MM="$FIXED_TABLE_HEIGHT_MM" \
+  local target_file="${1:-$TARGET_JSON}" admission_file="${2:-$ADMISSION_JSON}"
+  local force_fixed="${3:-$FORCE_FIXED_TARGET}" allow_fixed="${4:-$ALLOW_FIXED_XY_FALLBACK}"
+  TARGET_FILE="$target_file" ADMISSION_FILE="$admission_file" FIXED_MM="$FIXED_TABLE_HEIGHT_MM" \
     MAX_DELTA_MM="$GROUND_PLANE_MAX_DELTA_MM" \
-    FORCE_FIXED="$FORCE_FIXED_TARGET" ALLOW_FIXED="$ALLOW_FIXED_XY_FALLBACK" "$PYTHON_BIN" - <<'PY'
+    FORCE_FIXED="$force_fixed" ALLOW_FIXED="$allow_fixed" "$PYTHON_BIN" - <<'PY'
 import json, math, os, pathlib
 p = pathlib.Path(os.environ["TARGET_FILE"]); data = json.loads(p.read_text(encoding="utf-8"))
 if data.get("schema") != "competition_pick_target/v1": raise SystemExit("target schema must be competition_pick_target/v1")
@@ -432,6 +443,56 @@ if state=="unverified" and data.get("showcase_mode") is not True:
 PY
 }
 
+capture_target_once() {
+  local output_json="$1" label="$2" strict_retry="${3:-0}"
+  local adapter_log="$LOG_DIR/${label}_target.log"
+  local node_log="$LOG_DIR/${label}_target_node.log"
+  local bbox_bool=false fixed_xy_bool=false force_bool=false rc=0
+  [[ "$ALLOW_BBOX_CENTER" == 1 ]] && bbox_bool=true
+  if [[ "$strict_retry" != 1 ]]; then
+    [[ "$ALLOW_FIXED_XY_FALLBACK" == 1 ]] && fixed_xy_bool=true
+    [[ "$FORCE_FIXED_TARGET" == 1 ]] && force_bool=true
+  fi
+  trace "$label" "started" "topic=$TARGET_TOPIC strict_retry=$strict_retry"
+  "$PYTHON_BIN" "$TARGET_ADAPTER" --topic "$TARGET_TOPIC" --output "$output_json" --timeout "$TARGET_TIMEOUT_SEC" \
+    >"$adapter_log" 2>&1 & TARGET_SNAPSHOT_PID=$!
+  sleep "${TARGET_SUBSCRIBER_READY_SEC:-0.5}"
+  ros2 run "$TARGET_PACKAGE" "$TARGET_EXECUTABLE" --ros-args \
+    -p venue_profile_path:="$SITE_METADATA_PATH" -p projector_path:="$PROJECTOR_PATH" -p fixed_table_height_m:="0.650" \
+    -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
+    -p force_fixed_target:="$force_bool" >"$node_log" 2>&1 & TARGET_PID=$!
+  sleep "${TARGET_STARTUP_SEC:-2}"
+
+  if ! kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then
+    if wait "$TARGET_SNAPSHOT_PID"; then rc=0; else rc=$?; fi
+  elif ! kill -0 "$TARGET_PID" 2>/dev/null; then
+    for _ in $(seq 1 "${TARGET_REJECTION_GRACE_POLLS:-10}"); do
+      kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null || break
+      sleep .1
+    done
+    if kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then
+      terminate_pid "$TARGET_SNAPSHOT_PID" "${label}_adapter"
+      rc=1
+    elif wait "$TARGET_SNAPSHOT_PID"; then
+      rc=0
+    else
+      rc=$?
+    fi
+  elif wait "$TARGET_SNAPSHOT_PID"; then
+    rc=0
+  else
+    rc=$?
+  fi
+  TARGET_SNAPSHOT_PID=""
+  stop_target
+  if [[ "$rc" == 0 && -f "$output_json" ]]; then
+    trace "$label" "ok" "output=$output_json"
+    return 0
+  fi
+  trace "$label" "failed" "rc=$rc detail=$(tail -n 1 "$adapter_log" 2>/dev/null || true)"
+  return 1
+}
+
 # ROS-free fault-matrix hook. It invokes the exact production validators but never
 # sources ROS or starts hardware. It cannot report a live-system pass.
 case "${COMPETITION_VALIDATE_ONLY:-}" in
@@ -503,49 +564,13 @@ ros2 launch deyes_bringup imx219_stereo.launch.py \
 sleep "${VISION_STARTUP_SEC:-5}"
 if kill -0 "$VISION_PID" 2>/dev/null; then
   trace "vision" "ready" "pid=$VISION_PID"
-
-  bbox_bool=false; fixed_xy_bool=false; force_bool=false
-  [[ "$ALLOW_BBOX_CENTER" == 1 ]] && bbox_bool=true
-  [[ "$ALLOW_FIXED_XY_FALLBACK" == 1 ]] && fixed_xy_bool=true
-  [[ "$FORCE_FIXED_TARGET" == 1 ]] && force_bool=true
   export FORCE_FIXED_TARGET
-  trace "competition_target" "started" "topic=$TARGET_TOPIC"
-  "$PYTHON_BIN" "$TARGET_ADAPTER" --topic "$TARGET_TOPIC" --output "$TARGET_JSON" --timeout "$TARGET_TIMEOUT_SEC" \
-    >"$LOG_DIR/competition_target.log" 2>&1 & TARGET_SNAPSHOT_PID=$!
-  sleep "${TARGET_SUBSCRIBER_READY_SEC:-0.5}"
-  ros2 run "$TARGET_PACKAGE" "$TARGET_EXECUTABLE" --ros-args \
-    -p venue_profile_path:="$SITE_METADATA_PATH" -p projector_path:="$PROJECTOR_PATH" -p fixed_table_height_m:="0.650" \
-    -p allow_bbox_center:="$bbox_bool" -p allow_fixed_xy_fallback:="$fixed_xy_bool" \
-    -p force_fixed_target:="$force_bool" >"$LOG_DIR/competition_target_node.log" 2>&1 & TARGET_PID=$!
-  sleep "${TARGET_STARTUP_SEC:-2}"
-  snapshot_finished=0
-  if ! kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then
-    snapshot_finished=1
-  elif ! kill -0 "$TARGET_PID" 2>/dev/null; then
-    for _ in $(seq 1 "${TARGET_REJECTION_GRACE_POLLS:-10}"); do
-      if ! kill -0 "$TARGET_SNAPSHOT_PID" 2>/dev/null; then snapshot_finished=1; break; fi
-      sleep .1
-    done
-    if [[ "$snapshot_finished" == 0 ]]; then
-      tail -n 40 "$LOG_DIR/competition_target_node.log" >&2 || true
-      terminate_pid "$TARGET_SNAPSHOT_PID" target_snapshot_adapter
-      TARGET_SNAPSHOT_PID=""
-      target_detail="$(tail -n 1 "$LOG_DIR/competition_target_node.log" 2>/dev/null || true)"
-      select_showcase_target "competition_target_node_exited:${target_detail:-no_detail}"
-    fi
-  fi
-  if [[ -n "$TARGET_SNAPSHOT_PID" ]]; then
-    if wait "$TARGET_SNAPSHOT_PID"; then
-      TARGET_SNAPSHOT_PID=""
-      TARGET_SOURCE="live_competition_target"
-      EXECUTION_TARGET_JSON="$TARGET_JSON"
-      trace "competition_target" "ok" ""
-    else
-      rc=$?; TARGET_SNAPSHOT_PID=""
-      target_detail="$(tail -n 1 "$LOG_DIR/competition_target.log" 2>/dev/null || true)"
-      trace "competition_target" "failed" "rc=$rc detail=$target_detail"
-      select_showcase_target "competition_target_failed:rc=$rc:${target_detail:-no_detail}"
-    fi
+  if capture_target_once "$TARGET_JSON" competition 0; then
+    TARGET_SOURCE="live_competition_target"
+    EXECUTION_TARGET_JSON="$TARGET_JSON"
+  else
+    target_detail="$(tail -n 1 "$LOG_DIR/competition_target.log" 2>/dev/null || true)"
+    select_showcase_target "competition_target_failed:${target_detail:-no_detail}"
   fi
 else
   tail -n 60 "$LOG_DIR/vision.log" >&2 || true
@@ -585,14 +610,16 @@ else
   pick_args+=(--target-json "$TARGET_JSON" --feedback-adapter "$GRASP_FEEDBACK_ADAPTER" --feedback-json "$GRASP_FEEDBACK_JSON")
 fi
 pick_rc=0
+PICK_ATTEMPT_COUNT=1
 run_step pick "$PYTHON_BIN" "$PICK_SCRIPT" "${pick_args[@]}" || pick_rc=$?
 need_file "$GRASP_JSON"
-if ! PICK_FILE="$GRASP_JSON" DECISION_FILE="$PICK_DECISION_JSON" SHOWCASE_ENABLED="$COMPETITION_SHOWCASE_CONTINUE" \
+if ! PICK_FILE="$GRASP_JSON" DECISION_FILE="$PICK_DECISION_JSON" SHOWCASE_ENABLED="$COMPETITION_SHOWCASE_CONTINUE" ATTEMPT_NUMBER=1 \
   "$PYTHON_BIN" - <<'PY'
 import json, os, pathlib
-from deyes_stereo.competition_showcase_contract import decide_pick_continuation
+from deyes_stereo.competition_showcase_contract import decide_pick_attempt
 result=json.loads(pathlib.Path(os.environ["PICK_FILE"]).read_text(encoding="utf-8"))
-decision=decide_pick_continuation(result, showcase_enabled=os.environ["SHOWCASE_ENABLED"]=="1")
+decision=decide_pick_attempt(result, attempt_number=int(os.environ["ATTEMPT_NUMBER"]),
+                             showcase_enabled=os.environ["SHOWCASE_ENABLED"]=="1")
 pathlib.Path(os.environ["DECISION_FILE"]).write_text(json.dumps(decision,indent=2,sort_keys=True)+"\n",encoding="utf-8")
 PY
 then
@@ -616,11 +643,84 @@ PICK_COMPETITION_VERIFIED="${pick_decision[1]}"
 OBJECT_GRASP_VERIFIED="${pick_decision[2]}"
 PICK_MOTION_COMPLETED="${pick_decision[4]}"
 TRANSPORT_POSE_REACHED="${pick_decision[5]}"
+
+if [[ "${pick_decision[0]}" == retry_snapshot ]]; then
+  trace "grasp_verification" "retry_requested" "attempt=1 reason=${pick_decision[3]}"
+  if [[ -n "$VISION_PID" ]] && kill -0 "$VISION_PID" 2>/dev/null \
+      && capture_target_once "$RETRY_TARGET_JSON" competition_retry 1; then
+    need_file "$RETRY_TARGET_JSON"
+    validate_target_and_write_admission "$RETRY_TARGET_JSON" "$RETRY_ADMISSION_JSON" 0 0 \
+      || die "retry target/ground-plane admission failed"
+    FIRST_TARGET_FILE="$TARGET_JSON" RETRY_TARGET_FILE="$RETRY_TARGET_JSON" "$PYTHON_BIN" - <<'PY' \
+      || die "retry snapshot freshness/identity gate failed"
+import json, os, pathlib
+from deyes_stereo.competition_showcase_contract import validate_retry_snapshot
+first=json.loads(pathlib.Path(os.environ["FIRST_TARGET_FILE"]).read_text(encoding="utf-8"))
+retry=json.loads(pathlib.Path(os.environ["RETRY_TARGET_FILE"]).read_text(encoding="utf-8"))
+valid,reason=validate_retry_snapshot(first,retry)
+if not valid: raise SystemExit(reason)
+PY
+    mapfile -t retry_xy < <(TARGET_FILE="$RETRY_TARGET_JSON" "$PYTHON_BIN" - <<'PY'
+import json,os,pathlib
+d=json.loads(pathlib.Path(os.environ['TARGET_FILE']).read_text())
+sdk=d.get('right_arm_sdk_target_m')
+if not isinstance(sdk,list) or len(sdk)<2: raise SystemExit('retry target XY missing')
+print(float(sdk[0])*1000); print(float(sdk[1])*1000)
+PY
+)
+    [[ "${#retry_xy[@]}" == 2 ]] || die "retry target XY extraction failed"
+    PICK_ATTEMPT_COUNT=2
+    retry_pick_rc=0
+    run_step pick_retry "$PYTHON_BIN" "$PICK_SCRIPT" \
+      --x-mm "${retry_xy[0]}" --y-mm "${retry_xy[1]}" \
+      --venue-profile "$SITE_METADATA_PATH" --result-json "$RETRY_GRASP_JSON" \
+      --target-json "$RETRY_TARGET_JSON" --feedback-adapter "$GRASP_FEEDBACK_ADAPTER" \
+      --feedback-json "$RETRY_GRASP_FEEDBACK_JSON" || retry_pick_rc=$?
+    need_file "$RETRY_GRASP_JSON"
+    if ! PICK_FILE="$RETRY_GRASP_JSON" DECISION_FILE="$RETRY_PICK_DECISION_JSON" \
+      SHOWCASE_ENABLED="$COMPETITION_SHOWCASE_CONTINUE" ATTEMPT_NUMBER=2 "$PYTHON_BIN" - <<'PY'
+import json, os, pathlib
+from deyes_stereo.competition_showcase_contract import decide_pick_attempt
+result=json.loads(pathlib.Path(os.environ["PICK_FILE"]).read_text(encoding="utf-8"))
+decision=decide_pick_attempt(result, attempt_number=int(os.environ["ATTEMPT_NUMBER"]),
+                             showcase_enabled=os.environ["SHOWCASE_ENABLED"]=="1")
+pathlib.Path(os.environ["DECISION_FILE"]).write_text(json.dumps(decision,indent=2,sort_keys=True)+"\n",encoding="utf-8")
+PY
+    then
+      die "retry pick result classification failed"
+    fi
+    mapfile -t pick_decision < <(PICK_FILE="$RETRY_GRASP_JSON" DECISION_FILE="$RETRY_PICK_DECISION_JSON" "$PYTHON_BIN" - <<'PY'
+import json,os,pathlib
+result=json.loads(pathlib.Path(os.environ["PICK_FILE"]).read_text())
+decision=json.loads(pathlib.Path(os.environ["DECISION_FILE"]).read_text())
+print(decision["action"])
+print(1 if decision["competition_success"] else 0)
+print(1 if decision["object_grasp_verified"] else 0)
+print(decision.get("degraded_reason") or "")
+print(1 if result.get("motion_completed") is True else 0)
+print(1 if result.get("transport_pose_reached") is True else 0)
+PY
+)
+    [[ "${#pick_decision[@]}" == 6 ]] || die "retry pick decision output malformed"
+    [[ "${pick_decision[0]}" != stop ]] || die "retry pick hard failure:rc=$retry_pick_rc:${pick_decision[3]}"
+    PICK_COMPETITION_VERIFIED="${pick_decision[1]}"
+    OBJECT_GRASP_VERIFIED="${pick_decision[2]}"
+    PICK_MOTION_COMPLETED="${pick_decision[4]}"
+    TRANSPORT_POSE_REACHED="${pick_decision[5]}"
+    TARGET_SOURCE="live_competition_target_retry"
+    trace "grasp_retry" "completed" "attempt=2 action=${pick_decision[0]}"
+  else
+    pick_decision[0]=continue_showcase
+    pick_decision[3]="retry_snapshot_or_reidentification_failed"
+    trace "grasp_retry" "degraded" "new live target unavailable; no second motion"
+  fi
+fi
+
 if [[ "${pick_decision[0]}" == continue_showcase ]]; then
   add_degraded_reason "${pick_decision[3]}"
-  trace "grasp_verification" "degraded_continue" "navigation_permitted=false showcase_continuation=true reason=${pick_decision[3]}"
+  trace "grasp_verification" "degraded_continue" "attempts=$PICK_ATTEMPT_COUNT navigation_permitted=false showcase_continuation=true reason=${pick_decision[3]}"
 else
-  trace "grasp_verification" "ok" "success=true navigation_permitted=true"
+  trace "grasp_verification" "ok" "attempts=$PICK_ATTEMPT_COUNT success=true navigation_permitted=true"
 fi
 stop_vision
 

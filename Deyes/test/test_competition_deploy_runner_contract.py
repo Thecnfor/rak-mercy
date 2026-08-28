@@ -359,7 +359,10 @@ raise SystemExit(3)
         for token in (
             "competition_showcase_target/v1",
             "fixed_marker_showcase",
-            "decide_pick_continuation",
+            "decide_pick_attempt",
+            "retry_snapshot",
+            "validate_retry_snapshot",
+            "PICK_ATTEMPT_COUNT=2",
             "competition_transaction_result/v1",
             '"competition_success"',
             '"showcase_complete"',
@@ -450,13 +453,16 @@ raise SystemExit(3)
 
     def test_runner_order_permissions_and_powershell_flags_are_fail_closed(self) -> None:
         content = RUNNER.read_text(encoding="utf-8")
-        order = [content.index(token) for token in ("run_step nav_goal3", "run_step set_head", 'trace "competition_target" "started"',
-            "run_step pick", "decide_pick_continuation", "stop_vision\n\nsource_ros1", "run_step nav_goal4", "run_step place")]
+        order = [content.index(token) for token in ("run_step nav_goal3", "run_step set_head", 'capture_target_once "$TARGET_JSON"',
+            "run_step pick", "decide_pick_attempt", "stop_vision\n\nsource_ros1", "run_step nav_goal4", "run_step place")]
         self.assertEqual(order, sorted(order))
         for token in ('FIXED_TABLE_HEIGHT_MM="${FIXED_TABLE_HEIGHT_MM:-650}"', 'ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-0}"',
                       'ALLOW_FIXED_XY_FALLBACK="${ALLOW_FIXED_XY_FALLBACK:-0}"', 'FORCE_FIXED_TARGET="${FORCE_FIXED_TARGET:-0}"'):
             self.assertIn(token, content)
-        self.assertNotIn("ALLOW_DEGRADED", content); self.assertNotIn("retry", content.lower())
+        self.assertNotIn("ALLOW_DEGRADED", content)
+        self.assertIn("PICK_ATTEMPT_COUNT=2", content)
+        self.assertIn("ATTEMPT_NUMBER=2", content)
+        self.assertNotIn("ATTEMPT_NUMBER=3", content)
         self.assertIn("competition_venue_65cm.yaml", content)
         self.assertIn("venue_20260827_touch_projector.yaml", content)
         self.assertIn('-p projector_path:="$PROJECTOR_PATH"', content)

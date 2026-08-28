@@ -11,9 +11,11 @@ from deyes_stereo.competition_showcase_contract import (  # noqa: E402
     build_transaction_result,
     build_showcase_target,
     classify_showcase_failure,
+    decide_pick_attempt,
     decide_pick_continuation,
     runtime_perception_failure_code,
     validate_showcase_site,
+    validate_retry_snapshot,
 )
 import pytest
 import yaml
@@ -58,6 +60,83 @@ def test_object_not_verified_continues_only_as_truthful_showcase() -> None:
         "degraded_reason": "grasp_not_verified",
     }
     assert result["navigation_permitted"] is False
+
+
+def test_first_recoverable_failure_requests_one_fresh_snapshot_retry() -> None:
+    result = {
+        "schema": "competition_grasp_verification/v1",
+        "success": False,
+        "navigation_permitted": False,
+        "motion_completed": True,
+        "transport_pose_reached": True,
+        "hardware_ok": True,
+        "object_grasp_verified": False,
+        "verification_failure_class": "object_absent",
+        "reason": "grasp_not_verified",
+        "commands_emitted": True,
+    }
+    first = decide_pick_attempt(result, attempt_number=1, showcase_enabled=True)
+    assert first["action"] == "retry_snapshot"
+    assert first["next_attempt_number"] == 2
+    assert first["retry_requires_newer_stamp"] is True
+    second = decide_pick_attempt(result, attempt_number=2, showcase_enabled=True)
+    assert second["action"] == "continue_showcase"
+    assert second["competition_success"] is False
+    assert decide_pick_attempt(
+        result, attempt_number=1, showcase_enabled=False
+    )["action"] == "retry_snapshot"
+    assert decide_pick_attempt(
+        result, attempt_number=2, showcase_enabled=False
+    )["action"] == "stop"
+
+
+def test_retry_snapshot_must_be_newer_and_live() -> None:
+    first = {"schema": "competition_pick_target/v1", "valid": True,
+             "stamp_ns": 100, "selection_source": "axis_midpoint"}
+    retry = {**first, "stamp_ns": 101}
+    assert validate_retry_snapshot(first, retry) == (True, "ok")
+    assert validate_retry_snapshot(first, {**retry, "stamp_ns": 100}) == (
+        False, "retry_snapshot_not_newer"
+    )
+    assert validate_retry_snapshot(
+        first, {**retry, "selection_source": "fixed_xy_fallback"}
+    ) == (False, "retry_must_use_live_reidentification")
+
+
+def test_hardware_failure_never_requests_retry() -> None:
+    result = {
+        "schema": "competition_grasp_verification/v1",
+        "success": False,
+        "navigation_permitted": False,
+        "motion_completed": False,
+        "transport_pose_reached": False,
+        "hardware_ok": False,
+        "object_grasp_verified": False,
+        "verification_failure_class": "object_absent",
+        "reason": "pose_timeout",
+        "commands_emitted": True,
+    }
+    assert decide_pick_attempt(
+        result, attempt_number=1, showcase_enabled=True
+    )["action"] == "stop"
+
+
+def test_unknown_perception_verification_does_not_risk_a_second_grasp() -> None:
+    result = {
+        "schema": "competition_grasp_verification/v1",
+        "success": False,
+        "navigation_permitted": False,
+        "motion_completed": True,
+        "transport_pose_reached": True,
+        "hardware_ok": True,
+        "object_grasp_verified": False,
+        "verification_failure_class": "perception",
+        "reason": "feedback_timeout",
+        "commands_emitted": True,
+    }
+    assert decide_pick_attempt(
+        result, attempt_number=1, showcase_enabled=True
+    )["action"] == "continue_showcase"
 
 
 def test_verified_pick_preserves_normal_competition_success() -> None:

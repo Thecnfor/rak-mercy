@@ -202,6 +202,65 @@ def decide_pick_continuation(
     }
 
 
+def decide_pick_attempt(
+    result: dict[str, Any], *, attempt_number: int, showcase_enabled: bool,
+    max_attempts: int = 2,
+) -> dict[str, Any]:
+    """Choose verified continuation, one fresh-snapshot retry, showcase, or stop.
+
+    A retry is only possible when the completed hardware motion would otherwise
+    qualify for truthful showcase continuation.  Hardware and motion failures
+    therefore remain hard stops.  The last allowed attempt never requests a
+    third grasp.
+    """
+    if max_attempts != 2:
+        raise ValueError("competition pick max_attempts must be exactly 2")
+    if attempt_number not in (1, 2):
+        raise ValueError("attempt_number must be 1 or 2")
+    decision = decide_pick_continuation(result, showcase_enabled=showcase_enabled)
+    retry_eligible = (
+        attempt_number == 1
+        and result.get("verification_failure_class") == "object_absent"
+        and result.get("motion_completed") is True
+        and result.get("transport_pose_reached") is True
+        and result.get("hardware_ok") is True
+        and result.get("commands_emitted") is True
+        and result.get("object_grasp_verified") is not True
+    )
+    if retry_eligible:
+        return {
+            **decision,
+            "action": "retry_snapshot",
+            "competition_success": False,
+            "object_grasp_verified": False,
+            "retry_requires_newer_stamp": True,
+            "next_attempt_number": 2,
+        }
+    return decision
+
+
+def validate_retry_snapshot(
+    first_target: Mapping[str, Any], retry_target: Mapping[str, Any]
+) -> tuple[bool, str]:
+    """Require the second observation to be a new live target, not a replay."""
+    if first_target.get("schema") != "competition_pick_target/v1":
+        return False, "first_target_schema_mismatch"
+    if retry_target.get("schema") != "competition_pick_target/v1":
+        return False, "retry_target_schema_mismatch"
+    if retry_target.get("valid") is not True:
+        return False, "retry_target_invalid"
+    if retry_target.get("selection_source") == "fixed_xy_fallback":
+        return False, "retry_must_use_live_reidentification"
+    try:
+        first_stamp = int(first_target.get("stamp_ns", 0))
+        retry_stamp = int(retry_target.get("stamp_ns", 0))
+    except (TypeError, ValueError):
+        return False, "retry_target_stamp_invalid"
+    if first_stamp <= 0 or retry_stamp <= first_stamp:
+        return False, "retry_snapshot_not_newer"
+    return True, "ok"
+
+
 def build_transaction_result(
     *,
     transaction_id: str,
