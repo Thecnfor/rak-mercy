@@ -29,6 +29,7 @@ GRIPPER_NAMES = (
     "right_gripper_left_finger_joint", "right_gripper_right_finger_joint",
     "right_gripper_left_joint2", "right_gripper_right_join2",
 )
+DEBUG_ACTIVE_GRIPPER_NAMES = ("right_gripper_left_joint2",)
 
 
 def _sha(path: Path) -> str:
@@ -255,32 +256,47 @@ async def run() -> None:
         async def command(controller, names, targets, label, minimum_steps=1):
             nonlocal phase
             phase=label
+            requested_names=tuple(names)
+            requested_targets=tuple(targets)
+            monitored_names=requested_names
+            command_step_rad=MAX_JOINT_STEP_RAD
+            if FAST_DEBUG and requested_names==GRIPPER_NAMES:
+                active_index=GRIPPER_NAMES.index(DEBUG_ACTIVE_GRIPPER_NAMES[0])
+                names=DEBUG_ACTIVE_GRIPPER_NAMES
+                targets=(requested_targets[active_index],)
+                if label=="close":
+                    targets=(-math.radians(5.0),)
+                    command_step_rad=math.radians(0.1)
             dof_names=tuple(str(v) for v in controller.dof_names)
             joint_indices=np.asarray([dof_names.index(name) for name in names],dtype=np.int32)
+            monitored_indices=np.asarray([dof_names.index(name) for name in monitored_names],dtype=np.int32)
             current_full=np.asarray(controller.get_joint_positions(),dtype=float)
             initial=current_full[joint_indices].copy()
             target=np.asarray(targets,dtype=float)
             if len(target)!=len(joint_indices): raise RuntimeError(f"joint_target_shape_invalid:{label}")
-            convergence_threshold_deg=3.0 if tuple(names)==GRIPPER_NAMES else 1.0
+            convergence_threshold_deg=3.0 if requested_names==GRIPPER_NAMES else 1.0
             diagnostic={"label":label,"joint_names":list(names),
+                "monitored_joint_names":list(monitored_names),
                 "convergence_threshold_deg":convergence_threshold_deg,
                 "initial":[float(value) for value in initial],
                 "target":[float(value) for value in target]}
             result.setdefault("joint_command_diagnostics",[]).append(diagnostic)
             final=initial.copy()
             def checked_feedback(frame_kind,frame_number):
-                observed=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
-                nonfinite=np.flatnonzero(~np.isfinite(observed))
+                full_feedback=np.asarray(controller.get_joint_positions(),dtype=float)
+                observed=full_feedback[joint_indices]
+                monitored=full_feedback[monitored_indices]
+                nonfinite=np.flatnonzero(~np.isfinite(monitored))
                 if len(nonfinite):
                     diagnostic["nonfinite_feedback"]={"stage":label,"frame_kind":frame_kind,
                         "frame_number":int(frame_number),
-                        "joint_names":[names[int(index)] for index in nonfinite]}
+                        "joint_names":[monitored_names[int(index)] for index in nonfinite]}
                     raise RuntimeError(
                         f"joint_feedback_nonfinite:{label}:"+
-                        ",".join(names[int(index)] for index in nonfinite))
+                        ",".join(monitored_names[int(index)] for index in nonfinite))
                 return observed
             try:
-                steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-initial)))/MAX_JOINT_STEP_RAD)),1)
+                steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-initial)))/command_step_rad)),1)
                 diagnostic["interpolation_frames"]=steps
                 for index in range(1,steps+1):
                     desired=initial+(target-initial)*(index/steps)
