@@ -240,6 +240,17 @@ async def run() -> None:
                 "target":[float(value) for value in target]}
             result.setdefault("joint_command_diagnostics",[]).append(diagnostic)
             final=initial.copy()
+            def checked_feedback(frame_kind,frame_number):
+                observed=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
+                nonfinite=np.flatnonzero(~np.isfinite(observed))
+                if len(nonfinite):
+                    diagnostic["nonfinite_feedback"]={"stage":label,"frame_kind":frame_kind,
+                        "frame_number":int(frame_number),
+                        "joint_names":[names[int(index)] for index in nonfinite]}
+                    raise RuntimeError(
+                        f"joint_feedback_nonfinite:{label}:"+
+                        ",".join(names[int(index)] for index in nonfinite))
+                return observed
             try:
                 steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-initial)))/MAX_JOINT_STEP_RAD)),1)
                 diagnostic["interpolation_frames"]=steps
@@ -248,12 +259,13 @@ async def run() -> None:
                     controller.apply_action(ArticulationAction(
                         joint_positions=desired,joint_indices=joint_indices))
                     await app.next_update_async(); sample_geometry()
+                    final=checked_feedback("interpolation",index)
                 settled=False
                 for settle_frame in range(1,121):
                     controller.apply_action(ArticulationAction(
                         joint_positions=target,joint_indices=joint_indices))
                     await app.next_update_async(); sample_geometry()
-                    final=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
+                    final=checked_feedback("settle",settle_frame)
                     if float(np.max(np.abs(final-target)))<=math.radians(1.0):
                         diagnostic["settle_frames"]=settle_frame
                         settled=True
@@ -265,11 +277,12 @@ async def run() -> None:
                 try:
                     final=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
                     per_joint_error_deg=np.degrees(np.abs(final-target))
+                    finite_value=lambda value: float(value) if math.isfinite(float(value)) else None
                     diagnostic.update({
-                        "final":[float(value) for value in final],
-                        "per_joint_error_deg":[float(value) for value in per_joint_error_deg],
-                        "max_error_deg":float(np.max(per_joint_error_deg)),
-                        "moved_delta_deg":[float(value) for value in np.degrees(final-initial)],
+                        "final":[finite_value(value) for value in final],
+                        "per_joint_error_deg":[finite_value(value) for value in per_joint_error_deg],
+                        "max_error_deg":finite_value(np.max(per_joint_error_deg)),
+                        "moved_delta_deg":[finite_value(value) for value in np.degrees(final-initial)],
                     })
                 except Exception as feedback_exc:
                     diagnostic["feedback_capture_error"]=str(feedback_exc)

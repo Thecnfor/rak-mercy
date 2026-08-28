@@ -67,6 +67,7 @@ def build_plan(urdf: Path, profile: Path, scene_usd: Path) -> dict:
     steps=[{"phase":"before_pick","right_gripper_rad":open_gripper},*solved[:4],
         {"phase":"close","right_gripper_rad":[0.0]*4},*solved[4:9],
         {"phase":"release","right_gripper_rad":open_gripper},*solved[9:]]
+    transport_stow=next(item["right_arm_rad"] for item in solved if item["phase"]=="transport")
     return {
         "schema":"isaac_clearance_joint_plan/v1",
         "urdf_sha256":_sha(urdf),"motion_profile_sha256":_sha(profile),
@@ -75,7 +76,7 @@ def build_plan(urdf: Path, profile: Path, scene_usd: Path) -> dict:
         "power_on_left_rad":None,"power_on_right_rad":None,
         "selected_order":"left_then_right",
         "stow_left_rad":list(VENDOR_OBSERVATION_RAD),
-        "stow_right_rad":list(VENDOR_OBSERVATION_RAD),
+        "stow_right_rad":list(transport_stow),
         "steps":steps,
     }
 
