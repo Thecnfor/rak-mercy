@@ -62,6 +62,14 @@ def _validate(mode: str, tmp_path: Path, **values: str) -> subprocess.CompletedP
 
 
 class CompetitionDeployRunnerTest(unittest.TestCase):
+    def test_deployer_requires_an_explicit_robot_address(self) -> None:
+        deploy_source = DEPLOY.read_text(encoding="utf-8")
+        powershell_source = PS1.read_text(encoding="utf-8")
+        self.assertNotIn("192.168.43.60", deploy_source)
+        self.assertNotIn("192.168.43.60", powershell_source)
+        self.assertIn("--host or ROBOT_IP is required", deploy_source)
+        self.assertIn("Set -RobotIp or ROBOT_IP before deploying", powershell_source)
+
     def test_ros_free_runner_fixture_completes_goal4_and_place_after_target_and_grasp_failure(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             tmp = Path(directory)

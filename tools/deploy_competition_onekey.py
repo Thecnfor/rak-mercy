@@ -393,7 +393,7 @@ echo DEPLOY_DRY_RUN_OK
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--host", default=os.environ.get("ROBOT_IP", "192.168.43.60"))
+    parser.add_argument("--host", default=os.environ.get("ROBOT_IP", ""))
     parser.add_argument("--user", default=os.environ.get("ROBOT_USER", "elephant"))
     parser.add_argument("--password", default=os.environ.get("ROBOT_PASSWORD", ""))
     parser.add_argument("--remote-home", default="/home/elephant")
@@ -405,6 +405,8 @@ def main() -> int:
     parser.add_argument("--strict-result-gates", action="store_true")
     parser.add_argument("--vision-dry-run-seconds", type=int, default=int(os.environ.get("DEYES_DEPLOY_VISION_SECONDS", "30")))
     args = parser.parse_args()
+    if not args.host:
+        parser.error("--host or ROBOT_IP is required")
     if args.force_fixed_target != args.allow_fixed_xy_fallback:
         parser.error("--allow-fixed-xy-fallback and --force-fixed-target must be used together")
     if not args.password:

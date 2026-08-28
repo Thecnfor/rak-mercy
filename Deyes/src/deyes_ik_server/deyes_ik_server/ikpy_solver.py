@@ -75,19 +75,10 @@ def _build_active_links_mask(urdf_path: str, side: str) -> list[bool]:
         else:
             mask.append(False)
     if sum(mask) != 6:
-        # Fallback: activate the first six arm-named links. Better than
-        # crashing the field if the URDF is updated upstream.
-        # Rebuild rather than append: ikpy requires one mask entry per
-        # chain link.  Appending here previously doubled a 9-link mask to
-        # length 18 and Chain.from_urdf_file rejected it before solving.
-        mask = []
-        active_so_far = 0
-        for link in chain.links:
-            if active_so_far < 6 and link.name not in {"base_link", "base_footprint", "link_body"}:
-                mask.append(True)
-                active_so_far += 1
-            else:
-                mask.append(False)
+        found = [link.name for link, active in zip(chain.links, mask) if active]
+        raise ValueError(
+            f"URDF_ARM_JOINTS_INVALID:{side}:expected=6:found={len(found)}:{found!r}"
+        )
     return mask
 
 
@@ -178,7 +169,10 @@ class IkpySolver7DOF:
         if not _np().all(_np().isfinite(target_position)):
             return IkResult(False, [], failure_code="POSE_NONFINITE")
 
-        target_orientation = self._euler_deg_to_matrix(pose_base[3:6])
+        orientation_euler = _np().asarray(pose_base[3:6], dtype=float)
+        if not _np().all(_np().isfinite(orientation_euler)):
+            return IkResult(False, [], failure_code="POSE_NONFINITE")
+        target_orientation = self._euler_deg_to_matrix(orientation_euler)
 
         initial = self._compose_initial_state(current_joint_deg)
         try:
@@ -252,9 +246,6 @@ class IkpySolver7DOF:
     def _euler_deg_to_matrix(euler_xyz_deg: list[float]):
         from scipy.spatial.transform import Rotation as R
 
-        np = _np()
-        if not np.all(np.isfinite(euler_xyz_deg)):
-            return np.eye(3)
         return R.from_euler("xyz", euler_xyz_deg, degrees=True).as_matrix()
 
     # Convenience: vendor-probed observation pose in degrees.

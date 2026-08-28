@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 from types import SimpleNamespace
 
+import pytest
+
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "src" / "deyes_ik_server"))
 
@@ -33,12 +35,17 @@ def test_official_nine_link_chain_mask_has_nine_entries_and_six_active(monkeypat
     assert [name for name, active in zip(names, mask) if active] == names[1:7]
 
 
-def test_fallback_rebuilds_mask_instead_of_appending(monkeypatch):
-    # Simulate an upstream rename so the primary name match cannot find six.
+def test_unknown_joint_names_fail_closed(monkeypatch):
+    # An upstream rename must not guess which links map to actuator channels.
     names = ["base_link", "axis_a", "axis_b", "axis_c", "axis_d",
              "axis_e", "axis_f", "axis_g", "tool_fixed"]
     _install_fake_chain(monkeypatch, names)
-    mask = ikpy_solver._build_active_links_mask("renamed-nine-link.urdf", "right")
-    assert len(mask) == len(names) == 9
-    assert sum(mask) == 6
-    assert mask == [False, True, True, True, True, True, True, False, False]
+    with pytest.raises(ValueError, match="URDF_ARM_JOINTS_INVALID:right:expected=6:found=0"):
+        ikpy_solver._build_active_links_mask("renamed-nine-link.urdf", "right")
+
+
+def test_nonfinite_orientation_fails_before_ik_execution():
+    solver = object.__new__(ikpy_solver.IkpySolver7DOF)
+    result = solver.solve([0.4, 0.01, 0.2, float("nan"), -12.0, 0.0])
+    assert result.success is False
+    assert result.failure_code == "POSE_NONFINITE"
