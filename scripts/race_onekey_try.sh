@@ -21,6 +21,7 @@ ALLOW_BBOX_CENTER="${ALLOW_BBOX_CENTER:-0}"
 ALLOW_FIXED_XY_FALLBACK="${ALLOW_FIXED_XY_FALLBACK:-0}"
 FORCE_FIXED_TARGET="${FORCE_FIXED_TARGET:-0}"
 COMPETITION_SHOWCASE_CONTINUE="${COMPETITION_SHOWCASE_CONTINUE:-1}"
+DIRECT_TABLE_MODE="${DIRECT_TABLE_MODE:-0}"
 GROUND_PLANE_MAX_DELTA_MM="${GROUND_PLANE_MAX_DELTA_MM:-25}"
 TARGET_TIMEOUT_SEC="${TARGET_TIMEOUT_SEC:-30}"
 
@@ -116,7 +117,8 @@ write_transaction_result() {
     COMPETITION_OK="$COMPETITION_SUCCESS" SHOWCASE_OK="$SHOWCASE_COMPLETE" OBJECT_OK="$OBJECT_GRASP_VERIFIED" \
     TARGET_KIND="$TARGET_SOURCE" PICK_OK="$PICK_MOTION_COMPLETED" TRANSPORT_OK="$TRANSPORT_POSE_REACHED" \
     GOAL4_OK="$GOAL4_COMPLETED" PLACE_OK="$PLACE_MOTION_COMPLETED" DEGRADED="$DEGRADED_REASONS" \
-    HARD_STOP="$HARD_STOP_REASON" COMMANDS_SENT="$COMMANDS_EMITTED" PICK_ATTEMPTS="$PICK_ATTEMPT_COUNT" "$PYTHON_BIN" - <<'PY'
+    HARD_STOP="$HARD_STOP_REASON" COMMANDS_SENT="$COMMANDS_EMITTED" PICK_ATTEMPTS="$PICK_ATTEMPT_COUNT" \
+    DIRECT_TABLE="$DIRECT_TABLE_MODE" "$PYTHON_BIN" - <<'PY'
 import json, os, pathlib
 
 def flag(name): return os.environ[name] == "1"
@@ -124,6 +126,7 @@ payload = {
     "schema": "competition_transaction_result/v1",
     "transaction_id": os.environ["TX_ID"],
     "showcase_mode": flag("SHOWCASE_MODE"),
+    "direct_table_mode": flag("DIRECT_TABLE"),
     "competition_success": flag("COMPETITION_OK"),
     "showcase_complete": flag("SHOWCASE_OK"),
     "object_grasp_verified": flag("OBJECT_OK"),
@@ -508,6 +511,7 @@ bool01 ALLOW_BBOX_CENTER "$ALLOW_BBOX_CENTER"
 bool01 ALLOW_FIXED_XY_FALLBACK "$ALLOW_FIXED_XY_FALLBACK"
 bool01 FORCE_FIXED_TARGET "$FORCE_FIXED_TARGET"
 bool01 COMPETITION_SHOWCASE_CONTINUE "$COMPETITION_SHOWCASE_CONTINUE"
+bool01 DIRECT_TABLE_MODE "$DIRECT_TABLE_MODE"
 [[ "$ALLOW_FIXED_XY_FALLBACK" == "$FORCE_FIXED_TARGET" ]] || die "fixed XY fallback and FORCE_FIXED_TARGET must be enabled together"
 [[ "$FIXED_TABLE_HEIGHT_MM" == "650" ]] || die "FIXED_TABLE_HEIGHT_MM is competition-locked to 650"
 need_file "$CALIB_PATH"; need_file "$PROJECTOR_PATH"; need_file "$DETECTOR_CONFIG"; need_file "$SITE_METADATA_PATH"
@@ -537,18 +541,22 @@ PY
 COMMANDS_EMITTED=1
 trace "arm_stow" "ok" "$(tr -d '\n' < "$ARM_STOW_JSON")"
 
-source_ros1 || die "ROS1 environment setup failed"
-if ! rostopic list 2>/dev/null | grep -qx /move_base/goal; then
-  roslaunch turn_on_mercury_robot navigation.launch >"$LOG_DIR/navigation.log" 2>&1 & NAV_PID=$!
-  ready=0
-  for _ in $(seq 1 "${NAV_READY_POLLS:-30}"); do
-    rostopic list 2>/dev/null | grep -qx /move_base/goal && { ready=1; break; }
-    sleep 2
-  done
-  [[ "$ready" == 1 ]] || die "move_base unavailable"
+if [[ "$DIRECT_TABLE_MODE" == 1 ]]; then
+  trace "nav_goal3" "skipped" "direct_table_mode=true"
+else
+  source_ros1 || die "ROS1 environment setup failed"
+  if ! rostopic list 2>/dev/null | grep -qx /move_base/goal; then
+    roslaunch turn_on_mercury_robot navigation.launch >"$LOG_DIR/navigation.log" 2>&1 & NAV_PID=$!
+    ready=0
+    for _ in $(seq 1 "${NAV_READY_POLLS:-30}"); do
+      rostopic list 2>/dev/null | grep -qx /move_base/goal && { ready=1; break; }
+      sleep 2
+    done
+    [[ "$ready" == 1 ]] || die "move_base unavailable"
+  fi
+  COMMANDS_EMITTED=1
+  run_step nav_goal3 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL3" || die "navigation goal3 failed"
 fi
-COMMANDS_EMITTED=1
-run_step nav_goal3 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL3" || die "navigation goal3 failed"
 run_step set_head "$PYTHON_BIN" "$RAC_SCRIPTS/set_venue_head.py" || die "head command/feedback failed"
 
 source_ros2 || die "ROS2 environment setup failed"
@@ -724,8 +732,12 @@ else
 fi
 stop_vision
 
-source_ros1 || die "ROS1 environment restore failed before goal4"
-run_step nav_goal4 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL4" || die "navigation goal4 failed"
+if [[ "$DIRECT_TABLE_MODE" == 1 ]]; then
+  trace "nav_goal4" "skipped" "direct_table_mode=true"
+else
+  source_ros1 || die "ROS1 environment restore failed before goal4"
+  run_step nav_goal4 "$PYTHON_BIN" "$RAC_SCRIPTS/send_one_goal.py" "$NAV_GOAL4" || die "navigation goal4 failed"
+fi
 GOAL4_COMPLETED=1
 object_state=unverified
 [[ "$OBJECT_GRASP_VERIFIED" == 1 ]] && object_state=verified

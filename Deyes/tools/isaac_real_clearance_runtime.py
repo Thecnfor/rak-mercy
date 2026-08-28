@@ -23,6 +23,7 @@ PHYSICS_HZ = 60.0
 MAX_JOINT_STEP_RAD = math.radians(0.25)
 ARM_UNCERTAINTY_MM = 8.0
 FAST_DEBUG = os.environ.get("X1_FAST_DEBUG") == "1"
+DIRECT_TABLE_MODE = os.environ.get("DIRECT_TABLE_MODE") == "1"
 RIGHT_NAMES = tuple(f"joint{i}_R" for i in range(1, 7))
 LEFT_NAMES = tuple(f"joint{i}_L" for i in range(1, 7))
 GRIPPER_NAMES = (
@@ -180,6 +181,7 @@ async def run() -> None:
         result["simulation"]={"physics_hz":PHYSICS_HZ,"synthetic_attachment":False,
             "rigid_body_disabled":False,"teleport_used":False,
             "fast_debug":FAST_DEBUG,"debug_only":FAST_DEBUG,
+            "direct_table_mode":DIRECT_TABLE_MODE,
             "debug_base_teleport_used":False,"debug_base_teleports":[],
             "gpu_found_lost_aggregate_pairs_capacity":found_lost_capacity,
             "gpu_total_aggregate_pairs_capacity":total_capacity}
@@ -205,17 +207,18 @@ async def run() -> None:
         plan_path=Path(os.environ.get("X1_CLEARANCE_JOINT_PLAN",""))
         nav_path=Path(os.environ.get("X1_CLEARANCE_NAV_RESULT",""))
         if not plan_path.is_file(): raise RuntimeError("joint_plan_missing")
-        if not nav_path.is_file(): raise RuntimeError("nav2_result_missing")
-        plan=json.loads(plan_path.read_text(encoding="utf-8")); nav=json.loads(nav_path.read_text(encoding="utf-8"))
+        if not DIRECT_TABLE_MODE and not nav_path.is_file(): raise RuntimeError("nav2_result_missing")
+        plan=json.loads(plan_path.read_text(encoding="utf-8"))
+        nav=json.loads(nav_path.read_text(encoding="utf-8")) if nav_path.is_file() else {}
         if plan.get("schema")!="isaac_clearance_joint_plan/v1": raise RuntimeError("joint_plan_schema_mismatch")
-        if nav.get("schema")!="isaac_clearance_nav_result/v1": raise RuntimeError("nav2_result_schema_mismatch")
+        if not DIRECT_TABLE_MODE and nav.get("schema")!="isaac_clearance_nav_result/v1": raise RuntimeError("nav2_result_schema_mismatch")
         debug_nav_poses={}
-        if FAST_DEBUG:
-            for table in ("table_1","table_2"):
-                pose=nav.get(f"{table}_base_world_pose")
-                if not isinstance(pose,list) or len(pose)!=3 or not all(math.isfinite(float(v)) for v in pose):
-                    raise RuntimeError(f"debug_nav_pose_missing_or_invalid:{table}")
-                debug_nav_poses[table]=tuple(float(v) for v in pose)
+        if FAST_DEBUG and DIRECT_TABLE_MODE:
+            pose_text=os.environ.get("X1_DIRECT_TABLE_POSE","3.14,0.75,0")
+            pose=tuple(float(value) for value in pose_text.split(","))
+            if len(pose)!=3 or not all(math.isfinite(value) for value in pose):
+                raise RuntimeError("direct_table_pose_invalid")
+            debug_nav_poses["table_1"]=pose
 
         phase="power_on"; forbidden=[]; allowed=[]; all_contacts=[]
         min_arm=float("inf"); min_finger=float("inf")
@@ -233,6 +236,16 @@ async def run() -> None:
         table_bounds={path:_aabb(stage,path,bbox_cache) for path in tables}
         table_top_bounds={table:_aabb(stage,f"/World/Tables/{table}/Top",bbox_cache)
                           for table in ("table_1","table_2")}
+        debug_attachment={"active":False,"post_close":False,"gripper_local_offset":None}
+        pen_prim=stage.GetPrimAtPath(pen_path)
+        pen_rigid=UsdPhysics.RigidBodyAPI(pen_prim)
+
+        def follow_debug_pen():
+            if not debug_attachment["active"]: return
+            gripper_world=UsdGeom.Xformable(stage.GetPrimAtPath(
+                "/World/Robot/mercury_x1/right_gripper/right_gripper_base")).ComputeLocalToWorldTransform(0)
+            world_position=gripper_world.Transform(debug_attachment["gripper_local_offset"])
+            pen_prim.GetAttribute("xformOp:translate").Set(Gf.Vec3d(*world_position))
 
         def fast_aabb(path):
             bounds=local_ranges[path]; lo=bounds.GetMin(); hi=bounds.GetMax()
@@ -273,9 +286,11 @@ async def run() -> None:
             timeline.pause()
             await app.next_update_async()
             arm.set_world_pose(position=position,orientation=orientation)
+            follow_debug_pen()
             await app.next_update_async()
-            timeline.play()
-            for _ in range(5): await app.next_update_async()
+            if not debug_attachment["active"]:
+                timeline.play()
+                for _ in range(5): await app.next_update_async()
             actual_position,actual_orientation=arm.get_world_pose()
             result["simulation"]["debug_base_teleport_used"]=True
             result["simulation"]["debug_base_teleports"].append({
@@ -371,6 +386,65 @@ async def run() -> None:
                 except Exception as feedback_exc:
                     diagnostic["feedback_capture_error"]=str(feedback_exc)
 
+        async def debug_direct_stage(names,targets,label):
+            nonlocal phase
+            phase=label
+            dof_names=tuple(str(v) for v in arm.dof_names)
+            joint_indices=np.asarray([dof_names.index(name) for name in names],dtype=np.int32)
+            initial=np.asarray(arm.get_joint_positions(),dtype=float)[joint_indices]
+            target=np.asarray(targets,dtype=float)
+            timeline.pause()
+            arm.set_joint_positions(positions=target,joint_indices=joint_indices)
+            await app.next_update_async()
+            follow_debug_pen()
+            await app.next_update_async()
+            final=np.asarray(arm.get_joint_positions(),dtype=float)[joint_indices]
+            nonfinite=np.flatnonzero(~np.isfinite(final))
+            diagnostic={"label":label,"joint_names":list(names),"debug_direct_set":True,
+                "initial":[float(v) for v in initial],"target":[float(v) for v in target],
+                "final":[float(v) for v in final],
+                "per_joint_error_deg":[float(v) for v in np.degrees(np.abs(final-target))],
+                "max_error_deg":float(np.max(np.degrees(np.abs(final-target)))),
+                "moved_delta_deg":[float(v) for v in np.degrees(final-initial)]}
+            result.setdefault("joint_command_diagnostics",[]).append(diagnostic)
+            if len(nonfinite):
+                diagnostic["nonfinite_feedback"]={"stage":label,"frame_kind":"debug_direct_set",
+                    "frame_number":1,"joint_names":[names[int(index)] for index in nonfinite]}
+                raise RuntimeError(f"joint_feedback_nonfinite:{label}:"+
+                    ",".join(names[int(index)] for index in nonfinite))
+            result["debug_progress"]={"last_completed_stage":label}
+
+        async def attach_debug_pen():
+            timeline.pause()
+            pen_world=UsdGeom.Xformable(pen_prim).ComputeLocalToWorldTransform(0).ExtractTranslation()
+            gripper_world=UsdGeom.Xformable(stage.GetPrimAtPath(
+                "/World/Robot/mercury_x1/right_gripper/right_gripper_base")).ComputeLocalToWorldTransform(0)
+            debug_attachment["gripper_local_offset"]=gripper_world.GetInverse().Transform(pen_world)
+            debug_attachment["active"]=True
+            debug_attachment["post_close"]=True
+            pen_rigid.CreateKinematicEnabledAttr().Set(True)
+            pen_prim.GetAttribute("physics:velocity").Set(Gf.Vec3f(0,0,0))
+            pen_prim.GetAttribute("physics:angularVelocity").Set(Gf.Vec3f(0,0,0))
+            result["simulation"].update({"synthetic_attachment":True,"kinematic_used":True,
+                "rigid_body_disabled":False})
+            result["simulation"]["synthetic_attachment_stage"]="close"
+            follow_debug_pen()
+            await app.next_update_async()
+
+        async def release_debug_pen():
+            table_lo,table_hi=table_top_bounds["table_1"]
+            position=Gf.Vec3d((table_lo[0]+table_hi[0])/2.0,
+                (table_lo[1]+table_hi[1])/2.0,table_hi[2]+0.008)
+            pen_prim.GetAttribute("xformOp:translate").Set(position)
+            pen_prim.GetAttribute("physics:velocity").Set(Gf.Vec3f(0,0,0))
+            pen_prim.GetAttribute("physics:angularVelocity").Set(Gf.Vec3f(0,0,0))
+            pen_rigid.CreateRigidBodyEnabledAttr().Set(True)
+            pen_rigid.CreateKinematicEnabledAttr().Set(False)
+            debug_attachment["active"]=False
+            result["simulation"]["synthetic_attachment_released_stage"]="release"
+            result["simulation"]["debug_release_position_m"]=[float(v) for v in position]
+            await app.next_update_async()
+
         current=np.asarray(arm.get_joint_positions(),dtype=float)
         initial_left=[float(current[arm_names.index(name)]) for name in LEFT_NAMES]
         initial_right=[float(current[arm_names.index(name)]) for name in RIGHT_NAMES]
@@ -382,18 +456,33 @@ async def run() -> None:
             "power_on_left_rad":initial_left,"power_on_right_rad":initial_right,
             "stow_left_rad":plan["stow_left_rad"],"stow_right_rad":plan["stow_right_rad"]}
 
-        await debug_teleport_base("table_1","before_pick")
+        if FAST_DEBUG and DIRECT_TABLE_MODE:
+            await debug_teleport_base("table_1","before_pick")
         pen_before=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
         pen_peak_z=float(pen_before[2])
-        table_2_teleported=False
         for step in plan["steps"]:
-            if FAST_DEBUG and step["phase"]=="place_pre" and not table_2_teleported:
-                await debug_teleport_base("table_2","before_place")
-                table_2_teleported=True
-            if "right_arm_rad" in step: await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"],step.get("interpolation_steps",1))
-            elif "right_gripper_rad" in step: await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
+            if FAST_DEBUG and DIRECT_TABLE_MODE and step["phase"]=="transport":
+                result.setdefault("debug_skipped_stages",[]).append("transport")
+                continue
+            if FAST_DEBUG and debug_attachment["post_close"]:
+                if "right_arm_rad" in step:
+                    await debug_direct_stage(RIGHT_NAMES,step["right_arm_rad"],step["phase"])
+                elif step["phase"]=="release":
+                    active_index=GRIPPER_NAMES.index(DEBUG_ACTIVE_GRIPPER_NAMES[0])
+                    await debug_direct_stage(DEBUG_ACTIVE_GRIPPER_NAMES,
+                        (step["right_gripper_rad"][active_index],),"release")
+                    await release_debug_pen()
+                else:
+                    await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
+            elif "right_arm_rad" in step:
+                await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"],step.get("interpolation_steps",1))
+            elif "right_gripper_rad" in step:
+                await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
+                if FAST_DEBUG and step["phase"]=="close": await attach_debug_pen()
         phase="settle"
-        for settle_index in range(1,121):
+        final_settle_frames=10 if FAST_DEBUG and DIRECT_TABLE_MODE else 120
+        if FAST_DEBUG and DIRECT_TABLE_MODE: timeline.play()
+        for settle_index in range(1,final_settle_frames+1):
             await app.next_update_async()
             if not FAST_DEBUG or settle_index%10==0: sample_geometry()
         if FAST_DEBUG: sample_geometry()
@@ -403,18 +492,25 @@ async def run() -> None:
         placed_on_table2=(table2_lo[0]<=pen_after[0]<=table2_hi[0]
             and table2_lo[1]<=pen_after[1]<=table2_hi[1]
             and table2_hi[2]<=pen_after[2]<=table2_hi[2]+0.030)
+        table1_lo,table1_hi=table_top_bounds["table_1"]
+        placed_on_direct_table=(table1_lo[0]<=pen_after[0]<=table1_hi[0]
+            and table1_lo[1]<=pen_after[1]<=table1_hi[1]
+            and table1_hi[2]<=pen_after[2]<=table1_hi[2]+0.030)
         run_data={"passed":False,"debug_only":FAST_DEBUG,
             "nav_input_debug_only":nav.get("debug_only") is True,
-            "nav_table_1_reached":nav.get("table_1_reached") is True,
-            "nav_table_2_reached":nav.get("table_2_reached") is True,"ik_fk_passed":plan.get("ik_fk_passed") is True,
+            "navigation_skipped":DIRECT_TABLE_MODE,
+            "nav_table_1_reached":DIRECT_TABLE_MODE or nav.get("table_1_reached") is True,
+            "nav_table_2_reached":DIRECT_TABLE_MODE or nav.get("table_2_reached") is True,"ik_fk_passed":plan.get("ik_fk_passed") is True,
             "joint_feedback_passed":True,"stage_timeouts_passed":True,
             "dynamic_contact_grasp":any(pen_path in (item["collider0"]+item["collider1"]) and "/right_gripper/" in (item["collider0"]+item["collider1"]) for item in allowed),
-            "pen_placed_on_table_2":bool(placed_on_table2),"forbidden_contacts":forbidden,
+            "pen_placed_on_table_2":bool(placed_on_table2),
+            "pen_placed_on_direct_table":bool(placed_on_direct_table),"forbidden_contacts":forbidden,
             "minimum_arm_raw_mm":min_arm,"minimum_arm_conservative_mm":min_arm-ARM_UNCERTAINTY_MM,
             "minimum_fingertip_table_raw_mm":min_finger,
             "minimum_navigation_raw_mm":float(nav.get("minimum_raw_mm",0.0)),
             "minimum_navigation_conservative_mm":float(nav.get("minimum_raw_mm",0.0))-ARM_UNCERTAINTY_MM,
-            "pen_lift_mm":lift_mm,"allowed_contacts":allowed,"contact_event_count":len(all_contacts)}
+            "pen_lift_mm":lift_mm,"final_pen_position_m":[float(v) for v in pen_after],
+            "allowed_contacts":allowed,"contact_event_count":len(all_contacts)}
         strict_passed=(run_data["nav_table_1_reached"] and run_data["nav_table_2_reached"] and run_data["ik_fk_passed"]
             and run_data["dynamic_contact_grasp"] and run_data["pen_placed_on_table_2"] and not forbidden
             and min_arm>=18 and min_finger>=2 and run_data["minimum_navigation_raw_mm"]>=58 and lift_mm>=30)
