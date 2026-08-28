@@ -22,6 +22,7 @@ SCENE_CONFIG = Path("/var/workspace/docker/isaac/scenes/team_rak_finals_20260820
 PHYSICS_HZ = 60.0
 MAX_JOINT_STEP_RAD = math.radians(0.25)
 ARM_UNCERTAINTY_MM = 8.0
+FAST_DEBUG = os.environ.get("X1_FAST_DEBUG") == "1"
 RIGHT_NAMES = tuple(f"joint{i}_R" for i in range(1, 7))
 LEFT_NAMES = tuple(f"joint{i}_L" for i in range(1, 7))
 GRIPPER_NAMES = (
@@ -116,7 +117,7 @@ async def run() -> None:
 
     output=Path(os.environ.get("X1_CLEARANCE_RAW_JSON","/var/workspace/temp/x1-clearance/raw.json"))
     output.parent.mkdir(parents=True,exist_ok=True)
-    result={"passed":False,"failure_reasons":[],"run":{}}
+    result={"passed":False,"debug_only":FAST_DEBUG,"failure_reasons":[],"run":{}}
     app=omni.kit.app.get_app()
     try:
         if os.environ.get("ROS_DOMAIN_ID")!="46": raise RuntimeError("ros_domain_must_be_46")
@@ -177,6 +178,7 @@ async def run() -> None:
             "missing":missing,"table_top_surface_z_m":top_surfaces}
         result["simulation"]={"physics_hz":PHYSICS_HZ,"synthetic_attachment":False,
             "rigid_body_disabled":False,"teleport_used":False,
+            "fast_debug":FAST_DEBUG,"debug_only":FAST_DEBUG,
             "gpu_found_lost_aggregate_pairs_capacity":found_lost_capacity,
             "gpu_total_aggregate_pairs_capacity":total_capacity}
         if not asset_ok: raise RuntimeError("asset_or_table_height_audit_failed")
@@ -284,21 +286,29 @@ async def run() -> None:
                     desired=initial+(target-initial)*(index/steps)
                     controller.apply_action(ArticulationAction(
                         joint_positions=desired,joint_indices=joint_indices))
-                    await app.next_update_async(); sample_geometry()
+                    await app.next_update_async()
+                    if not FAST_DEBUG or index%10==0: sample_geometry()
                     final=checked_feedback("interpolation",index)
                 settled=False
-                for settle_frame in range(1,121):
+                settle_limit=1 if FAST_DEBUG else 120
+                for settle_frame in range(1,settle_limit+1):
                     controller.apply_action(ArticulationAction(
                         joint_positions=target,joint_indices=joint_indices))
-                    await app.next_update_async(); sample_geometry()
+                    await app.next_update_async()
+                    if not FAST_DEBUG: sample_geometry()
                     final=checked_feedback("settle",settle_frame)
                     if float(np.max(np.abs(final-target)))<=math.radians(convergence_threshold_deg):
                         diagnostic["settle_frames"]=settle_frame
                         settled=True
                         break
                 if not settled:
-                    diagnostic["settle_frames"]=120
-                    raise RuntimeError(f"joint_feedback_not_converged:{label}")
+                    diagnostic["settle_frames"]=settle_limit
+                    if FAST_DEBUG:
+                        diagnostic["finite_nonconvergence_continued"]=True
+                    else:
+                        raise RuntimeError(f"joint_feedback_not_converged:{label}")
+                if FAST_DEBUG: sample_geometry()
+                result["debug_progress"]={"last_completed_stage":label}
             finally:
                 try:
                     final=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
@@ -330,14 +340,19 @@ async def run() -> None:
             if "right_arm_rad" in step: await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"],step.get("interpolation_steps",1))
             elif "right_gripper_rad" in step: await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
         phase="settle"
-        for _ in range(120): await app.next_update_async(); sample_geometry()
+        for settle_index in range(1,121):
+            await app.next_update_async()
+            if not FAST_DEBUG or settle_index%10==0: sample_geometry()
+        if FAST_DEBUG: sample_geometry()
         pen_after=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
         lift_mm=float(pen_peak_z-pen_before[2])*1000.0
         table2_lo,table2_hi=_aabb(stage,"/World/Tables/table_2/Top")
         placed_on_table2=(table2_lo[0]<=pen_after[0]<=table2_hi[0]
             and table2_lo[1]<=pen_after[1]<=table2_hi[1]
             and table2_hi[2]<=pen_after[2]<=table2_hi[2]+0.030)
-        run_data={"passed":False,"nav_table_1_reached":nav.get("table_1_reached") is True,
+        run_data={"passed":False,"debug_only":FAST_DEBUG,
+            "nav_input_debug_only":nav.get("debug_only") is True,
+            "nav_table_1_reached":nav.get("table_1_reached") is True,
             "nav_table_2_reached":nav.get("table_2_reached") is True,"ik_fk_passed":plan.get("ik_fk_passed") is True,
             "joint_feedback_passed":True,"stage_timeouts_passed":True,
             "dynamic_contact_grasp":any(pen_path in (item["collider0"]+item["collider1"]) and "/right_gripper/" in (item["collider0"]+item["collider1"]) for item in allowed),
@@ -347,11 +362,17 @@ async def run() -> None:
             "minimum_navigation_raw_mm":float(nav.get("minimum_raw_mm",0.0)),
             "minimum_navigation_conservative_mm":float(nav.get("minimum_raw_mm",0.0))-ARM_UNCERTAINTY_MM,
             "pen_lift_mm":lift_mm,"allowed_contacts":allowed,"contact_event_count":len(all_contacts)}
-        run_data["passed"]=(run_data["nav_table_1_reached"] and run_data["nav_table_2_reached"] and run_data["ik_fk_passed"]
+        strict_passed=(run_data["nav_table_1_reached"] and run_data["nav_table_2_reached"] and run_data["ik_fk_passed"]
             and run_data["dynamic_contact_grasp"] and run_data["pen_placed_on_table_2"] and not forbidden
             and min_arm>=18 and min_finger>=2 and run_data["minimum_navigation_raw_mm"]>=58 and lift_mm>=30)
-        result["run"]=run_data; result["passed"]=run_data["passed"]
-        if not result["passed"]: result["failure_reasons"].append("acceptance_threshold_not_met")
+        run_data["strict_thresholds_passed"]=strict_passed
+        run_data["passed"]=False if FAST_DEBUG else strict_passed
+        result["run"]=run_data
+        result["passed"]=False if FAST_DEBUG else run_data["passed"]
+        if FAST_DEBUG:
+            result["failure_reasons"].append("fast_debug_run_not_valid_for_acceptance")
+        elif not result["passed"]:
+            result["failure_reasons"].append("acceptance_threshold_not_met")
     except Exception as exc:
         result["failure_reasons"].append(str(exc)); result["traceback"]=traceback.format_exc()
     finally:
