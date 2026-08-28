@@ -126,6 +126,28 @@ async def run() -> None:
         base=_load_base(); await base.configure()
         stage=omni.usd.get_context().get_stage()
         if stage is None: raise RuntimeError("stage_missing")
+        physics_scene_prim=stage.GetPrimAtPath("/World/PhysicsScene")
+        if not physics_scene_prim.IsValid(): raise RuntimeError("physics_scene_missing:/World/PhysicsScene")
+        physx_scene=PhysxSchema.PhysxSceneAPI(physics_scene_prim)
+        if not physics_scene_prim.HasAPI(PhysxSchema.PhysxSceneAPI):
+            physx_scene=PhysxSchema.PhysxSceneAPI.Apply(physics_scene_prim)
+        found_lost_attr=physx_scene.GetGpuFoundLostAggregatePairsCapacityAttr()
+        found_lost_current=found_lost_attr.Get()
+        if found_lost_current is None:
+            found_lost_attr=physx_scene.CreateGpuFoundLostAggregatePairsCapacityAttr(65536)
+        elif int(found_lost_current)<65536:
+            found_lost_attr.Set(65536)
+        total_attr=physx_scene.GetGpuTotalAggregatePairsCapacityAttr()
+        total_current=total_attr.Get()
+        if total_current is None:
+            total_attr=physx_scene.CreateGpuTotalAggregatePairsCapacityAttr(65536)
+        elif int(total_current)<65536:
+            total_attr.Set(65536)
+        found_lost_capacity=int(found_lost_attr.Get())
+        total_capacity=int(total_attr.Get())
+        if found_lost_capacity<65536 or total_capacity<65536:
+            raise RuntimeError(
+                f"physx_gpu_aggregate_capacity_readback_failed:{found_lost_capacity}:{total_capacity}")
         scene_usd=Path(str(base.ARGS.scene_usd))
         collision,active_collision,disabled,missing,inactive_collision=_collision_inventory(stage)
         source_stage=Usd.Stage.Open(str(SOURCE_USD))
@@ -154,7 +176,9 @@ async def run() -> None:
             "all_required_collisions_enabled":not disabled and not missing,"disabled":disabled,
             "missing":missing,"table_top_surface_z_m":top_surfaces}
         result["simulation"]={"physics_hz":PHYSICS_HZ,"synthetic_attachment":False,
-            "rigid_body_disabled":False,"teleport_used":False}
+            "rigid_body_disabled":False,"teleport_used":False,
+            "gpu_found_lost_aggregate_pairs_capacity":found_lost_capacity,
+            "gpu_total_aggregate_pairs_capacity":total_capacity}
         if not asset_ok: raise RuntimeError("asset_or_table_height_audit_failed")
 
         for prim in stage.Traverse():
