@@ -229,17 +229,50 @@ async def run() -> None:
         async def command(controller, names, targets, label, minimum_steps=1):
             nonlocal phase
             phase=label
-            dof_names=tuple(str(v) for v in controller.dof_names); current=np.asarray(controller.get_joint_positions(),dtype=float)
-            target=current.copy()
-            for name,value in zip(names,targets): target[dof_names.index(name)]=float(value)
-            steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-current)))/MAX_JOINT_STEP_RAD)),1)
-            for index in range(1,steps+1):
-                desired=current+(target-current)*(index/steps)
-                controller.apply_action(ArticulationAction(joint_positions=desired))
-                await app.next_update_async(); sample_geometry()
-            for _ in range(30): await app.next_update_async(); sample_geometry()
-            observed=np.asarray(controller.get_joint_positions(),dtype=float)
-            if float(np.max(np.abs(observed-target)))>math.radians(1.0): raise RuntimeError(f"joint_feedback_not_converged:{label}")
+            dof_names=tuple(str(v) for v in controller.dof_names)
+            joint_indices=np.asarray([dof_names.index(name) for name in names],dtype=np.int32)
+            current_full=np.asarray(controller.get_joint_positions(),dtype=float)
+            initial=current_full[joint_indices].copy()
+            target=np.asarray(targets,dtype=float)
+            if len(target)!=len(joint_indices): raise RuntimeError(f"joint_target_shape_invalid:{label}")
+            diagnostic={"label":label,"joint_names":list(names),
+                "initial":[float(value) for value in initial],
+                "target":[float(value) for value in target]}
+            result.setdefault("joint_command_diagnostics",[]).append(diagnostic)
+            final=initial.copy()
+            try:
+                steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-initial)))/MAX_JOINT_STEP_RAD)),1)
+                diagnostic["interpolation_frames"]=steps
+                for index in range(1,steps+1):
+                    desired=initial+(target-initial)*(index/steps)
+                    controller.apply_action(ArticulationAction(
+                        joint_positions=desired,joint_indices=joint_indices))
+                    await app.next_update_async(); sample_geometry()
+                settled=False
+                for settle_frame in range(1,121):
+                    controller.apply_action(ArticulationAction(
+                        joint_positions=target,joint_indices=joint_indices))
+                    await app.next_update_async(); sample_geometry()
+                    final=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
+                    if float(np.max(np.abs(final-target)))<=math.radians(1.0):
+                        diagnostic["settle_frames"]=settle_frame
+                        settled=True
+                        break
+                if not settled:
+                    diagnostic["settle_frames"]=120
+                    raise RuntimeError(f"joint_feedback_not_converged:{label}")
+            finally:
+                try:
+                    final=np.asarray(controller.get_joint_positions(),dtype=float)[joint_indices]
+                    per_joint_error_deg=np.degrees(np.abs(final-target))
+                    diagnostic.update({
+                        "final":[float(value) for value in final],
+                        "per_joint_error_deg":[float(value) for value in per_joint_error_deg],
+                        "max_error_deg":float(np.max(per_joint_error_deg)),
+                        "moved_delta_deg":[float(value) for value in np.degrees(final-initial)],
+                    })
+                except Exception as feedback_exc:
+                    diagnostic["feedback_capture_error"]=str(feedback_exc)
 
         current=np.asarray(arm.get_joint_positions(),dtype=float)
         initial_left=[float(current[arm_names.index(name)]) for name in LEFT_NAMES]
