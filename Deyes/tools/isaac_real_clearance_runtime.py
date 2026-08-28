@@ -51,8 +51,8 @@ def _load_base():
 
 
 def _aabb(stage, path: str):
-    from pxr import Gf, UsdGeom
-    cache=UsdGeom.BBoxCache(UsdGeom.Tokens.default_, [UsdGeom.Tokens.default_], useExtentsHint=True)
+    from pxr import Usd, UsdGeom
+    cache=UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_], useExtentsHint=True)
     prim=stage.GetPrimAtPath(path)
     if not prim.IsValid(): raise RuntimeError(f"aabb_prim_missing:{path}")
     bounds=cache.ComputeWorldBound(prim).ComputeAlignedRange()
