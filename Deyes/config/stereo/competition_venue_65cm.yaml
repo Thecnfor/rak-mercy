@@ -46,6 +46,10 @@ transport:
   tcp_vertical_clearance_nominal_mm: 5.0
   tcp_vertical_clearance_conservative_mm: 0.0
   collision_clearance_validated: false
+  # Populated only by the Socl_ous real-physics acceptance finalizer.  The
+  # production loader verifies both this file hash and the motion-contract hash.
+  clearance_evidence_manifest: null
+  clearance_evidence_sha256: null
   live_behavior_when_unvalidated: fail_closed_before_hardware_init
 grasp_verification:
   lifted_height_over_table_m: 0.030

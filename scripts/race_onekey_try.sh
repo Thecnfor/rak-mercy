@@ -31,6 +31,7 @@ TARGET_ADAPTER="${COMPETITION_TARGET_ADAPTER:-$RAC_SCRIPTS/competition_target_sn
 GRASP_FEEDBACK_ADAPTER="${COMPETITION_GRASP_FEEDBACK_ADAPTER:-$RAC_SCRIPTS/competition_grasp_feedback_adapter.py}"
 PICK_SCRIPT="${COMPETITION_PICK_SCRIPT:-$RAC_SCRIPTS/pick_pen_degraded.py}"
 PLACE_SCRIPT="${COMPETITION_PLACE_SCRIPT:-$RAC_SCRIPTS/place_pen_degraded.py}"
+ARM_PREPARE_SCRIPT="${COMPETITION_ARM_PREPARE_SCRIPT:-$RAC_SCRIPTS/prepare_competition_arms.py}"
 NAV_GOAL3="${COMPETITION_NAV_GOAL3:-goal3_right}"
 NAV_GOAL4="${COMPETITION_NAV_GOAL4:-goal4_back}"
 
@@ -43,6 +44,7 @@ GRASP_JSON="$LOG_DIR/grasp_verification.json"
 GRASP_FEEDBACK_JSON="$LOG_DIR/grasp_feedback.json"
 PICK_DECISION_JSON="$LOG_DIR/pick_decision.json"
 PLACE_JSON="$LOG_DIR/place.json"
+ARM_STOW_JSON="$LOG_DIR/arm_stow.json"
 TRANSACTION_RESULT_JSON="$LOG_DIR/transaction_result.json"
 TRACE_JSONL="$LOG_DIR/trace.jsonl"
 mkdir -p "$LOG_DIR"
@@ -448,11 +450,31 @@ bool01 COMPETITION_SHOWCASE_CONTINUE "$COMPETITION_SHOWCASE_CONTINUE"
 [[ "$ALLOW_FIXED_XY_FALLBACK" == "$FORCE_FIXED_TARGET" ]] || die "fixed XY fallback and FORCE_FIXED_TARGET must be enabled together"
 [[ "$FIXED_TABLE_HEIGHT_MM" == "650" ]] || die "FIXED_TABLE_HEIGHT_MM is competition-locked to 650"
 need_file "$CALIB_PATH"; need_file "$PROJECTOR_PATH"; need_file "$DETECTOR_CONFIG"; need_file "$SITE_METADATA_PATH"
-need_file "$DEYES_INSTALL/setup.bash"; need_file "$PICK_SCRIPT"; need_file "$PLACE_SCRIPT"
+need_file "$DEYES_INSTALL/setup.bash"; need_file "$PICK_SCRIPT"; need_file "$PLACE_SCRIPT"; need_file "$ARM_PREPARE_SCRIPT"
 need_file "$TARGET_ADAPTER"; need_file "$GRASP_FEEDBACK_ADAPTER"
 "$DEYES_ASSETS/probe_opencv_cuda.sh" "$OPENCV_PREFIX" >"$LOG_DIR/cuda_probe.log" 2>&1 || die "CUDA OpenCV probe failed"
 validate_engine_manifest || die "engine sidecar validation failed"
 trace "transaction" "started" "log_dir=$LOG_DIR"
+
+# The hash-bound Isaac evidence decides both the joint targets and the safe
+# order.  This must finish before navigation; a missing/tampered evidence file
+# therefore stops before either arm serial client is constructed.
+source_ros2 || die "ROS2 environment setup failed before arm preparation"
+run_step arm_stow "$PYTHON_BIN" "$ARM_PREPARE_SCRIPT" \
+  --venue-profile "$SITE_METADATA_PATH" --result-json "$ARM_STOW_JSON" \
+  || die "two-arm automatic stow failed"
+ARM_STOW_FILE="$ARM_STOW_JSON" "$PYTHON_BIN" - <<'PY' || die "arm stow result invalid"
+import json, os, pathlib
+data=json.loads(pathlib.Path(os.environ["ARM_STOW_FILE"]).read_text(encoding="utf-8"))
+if data.get("schema")!="competition_arm_stow_result/v1" or data.get("success") is not True:
+    raise SystemExit("arm stow did not succeed")
+if data.get("order") not in (["left","right"],["right","left"]):
+    raise SystemExit("arm stow order missing")
+if data.get("commands_emitted") is not True:
+    raise SystemExit("live arm stow emitted no commands")
+PY
+COMMANDS_EMITTED=1
+trace "arm_stow" "ok" "$(tr -d '\n' < "$ARM_STOW_JSON")"
 
 source_ros1 || die "ROS1 environment setup failed"
 if ! rostopic list 2>/dev/null | grep -qx /move_base/goal; then

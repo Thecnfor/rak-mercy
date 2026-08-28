@@ -3,7 +3,7 @@
 from __future__ import annotations
 import argparse, json, math, os, time
 from pathlib import Path
-from deyes_stereo.competition_pick_execution import Mercury650Executor, MotionProfile
+from deyes_stereo.competition_pick_execution import Mercury650Executor, MotionProfile, motion_profile_from_venue
 
 DEFAULT_PROFILE=Path(os.environ.get("DEGRADED_VENUE_PROFILE","/home/elephant/deyes_competition_assets/competition_venue_65cm.yaml"))
 
@@ -24,23 +24,7 @@ def _stable_gripper_feedback(arm, *, samples: int = 3, interval_sec: float = .1,
 
 
 def _motion_profile(path: Path) -> MotionProfile:
-    try:
-        import yaml
-        transport=yaml.safe_load(path.read_text(encoding="utf-8"))["transport"]
-        kinematics=(transport.get("kinematics_validated") is True
-                    and transport.get("joint_limits_passed") is True
-                    and float(transport.get("fk_position_residual_mm",float("inf")))<=5.0
-                    and float(transport.get("fk_orientation_residual_deg",float("inf")))<=2.0)
-        collision=transport.get("collision_clearance_validated") is True
-        clearance=float(transport.get("tcp_vertical_clearance_conservative_mm",0.0))
-        validated=(transport.get("transport_validated") is True and kinematics
-                   and collision and clearance>0.0)
-    except (OSError,KeyError,TypeError,ValueError,AttributeError):
-        validated=False; kinematics=False; collision=False; clearance=0.0
-    return MotionProfile(transport_validated=validated,
-        kinematics_validated=kinematics,
-        collision_clearance_validated=collision,
-        conservative_clearance_mm=clearance)
+    return motion_profile_from_venue(path)
 
 
 def main() -> int:

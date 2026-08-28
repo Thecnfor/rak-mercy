@@ -130,6 +130,10 @@ cp {home}/deyes_competition_ws/src/Deyes/config/stereo/competition_fixed_scene.y
 site_file="$(find {home}/deyes_competition_ws/src/Deyes/config -type f -name competition_venue_65cm.yaml | head -n 1)"
 [[ -f "$site_file" ]] || {{ echo 'missing competition_venue_65cm.yaml after config upload' >&2; exit 30; }}
 cp "$site_file" {home}/deyes_competition_assets/competition_venue_65cm.yaml
+clearance_file="$(dirname "$site_file")/competition_isaac_clearance_evidence.json"
+if [[ -f "$clearance_file" ]]; then
+  cp "$clearance_file" {home}/deyes_competition_assets/competition_isaac_clearance_evidence.json
+fi
 chmod +x {home}/scripts/*.sh {home}/scripts/*.py {home}/deyes_competition_assets/*.sh
 
 OPENCV_PREFIX={home}/opencv-4.8.0-cuda

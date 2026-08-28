@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -17,6 +18,47 @@ from deyes_stereo.competition_showcase_contract import (  # noqa: E402
     build_showcase_target,
     decide_pick_continuation,
 )
+from deyes_stereo.competition_clearance_evidence import canonical_sha256, motion_contract  # noqa: E402
+
+
+def _admitted_profile(tmp_path: Path, *, clearance: float = 10.0) -> Path:
+    profile = yaml.safe_load(
+        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
+    )
+    contract_sha = canonical_sha256(motion_contract(profile))
+    run = {
+        "passed": True, "nav_table_1_reached": True, "nav_table_2_reached": True,
+        "ik_fk_passed": True, "joint_feedback_passed": True, "stage_timeouts_passed": True,
+        "dynamic_contact_grasp": True, "pen_placed_on_table_2": True, "forbidden_contacts": [],
+        "minimum_arm_raw_mm": clearance + 8.0, "minimum_arm_conservative_mm": clearance,
+        "minimum_fingertip_table_raw_mm": 2.0, "minimum_navigation_raw_mm": 58.0,
+        "minimum_navigation_conservative_mm": 50.0, "pen_lift_mm": 30.0,
+    }
+    evidence = {
+        "schema": "isaac_clearance_evidence/v1", "passed": True,
+        "target_scope": "fixed_target_400_10_only", "motion_contract_sha256": contract_sha,
+        "assets": {"collision_prim_count": 55, "all_required_collisions_enabled": True,
+                   "scene_usd_sha256": "1"*64, "robot_usd_sha256": "2"*64,
+                   "scene_config_sha256": "3"*64},
+        "simulation": {"physics_hz": 60.0, "synthetic_attachment": False,
+                       "rigid_body_disabled": False, "teleport_used": False},
+        "initial_pose": {"both_arms_auto_stowed": True, "selected_order": "left_then_right",
+                         "power_on_left_rad": [0.0]*6, "power_on_right_rad": [0.0]*6,
+                         "stow_left_rad": [0.1]*6, "stow_right_rad": [-0.1]*6},
+        "runs": [run, dict(run)], "conservative_clearance_mm": clearance,
+    }
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence, sort_keys=True)+"\n", encoding="utf-8")
+    profile["transport"].update({
+        "transport_validated": True, "kinematics_validated": True,
+        "collision_clearance_validated": True,
+        "tcp_vertical_clearance_conservative_mm": clearance,
+        "clearance_evidence_manifest": evidence_path.name,
+        "clearance_evidence_sha256": hashlib.sha256(evidence_path.read_bytes()).hexdigest(),
+    })
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    return profile_path
 
 
 def _load_script(name: str):
@@ -59,17 +101,7 @@ def test_showcase_pick_reports_completed_motion_without_claiming_object_success(
     tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("pick_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": True,
-        "tcp_vertical_clearance_conservative_mm": 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
     target_path = tmp_path / "showcase-target.json"
     target_path.write_text(json.dumps(build_showcase_target("target_timeout")), encoding="utf-8")
     result_path = tmp_path / "pick-result.json"
@@ -98,17 +130,7 @@ def test_showcase_place_reports_motion_success_without_claiming_object_delivery(
     tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("place_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": True,
-        "tcp_vertical_clearance_conservative_mm": 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
     result_path = tmp_path / "place-result.json"
     fake = FakeMercury([10.0] * 3 + [70.0] * 3)
     monkeypatch.setitem(sys.modules, "pymycobot", SimpleNamespace(Mercury=lambda *_: fake))
@@ -134,17 +156,7 @@ def test_sensor_verified_pick_keeps_navigation_permission_truthful(
     tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("pick_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": True,
-        "tcp_vertical_clearance_conservative_mm": 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
     target_path = tmp_path / "target.json"
     target_path.write_text(json.dumps({
         "schema": "competition_pick_target/v1",
@@ -187,17 +199,11 @@ def test_hardware_faults_never_become_showcase_continuations(
     fault: str, tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("pick_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": fault != "collision",
-        "tcp_vertical_clearance_conservative_mm": 0.0 if fault == "collision" else 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
+    if fault == "collision":
+        profile = yaml.safe_load(profile_path.read_text())
+        profile["transport"]["collision_clearance_validated"] = False
+        profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
     target_path = tmp_path / "showcase-target.json"
     target_path.write_text(json.dumps(build_showcase_target("target_timeout")), encoding="utf-8")
     result_path = tmp_path / "pick-result.json"
@@ -244,17 +250,7 @@ def test_showcase_target_coordinates_are_bound_to_the_executed_xy(
     tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("pick_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": True,
-        "tcp_vertical_clearance_conservative_mm": 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
     target_path = tmp_path / "showcase-target.json"
     target_path.write_text(json.dumps(build_showcase_target("target_timeout")), encoding="utf-8")
     result_path = tmp_path / "pick-result.json"
@@ -283,17 +279,7 @@ def test_place_power_feedback_and_partial_motion_fail_hard_with_truthful_command
     fault: str, tmp_path: Path, monkeypatch,
 ) -> None:
     script = _load_script("place_pen_degraded.py")
-    profile = yaml.safe_load(
-        (ROOT / "Deyes/config/stereo/competition_venue_65cm.yaml").read_text()
-    )
-    profile["transport"].update({
-        "transport_validated": True,
-        "kinematics_validated": True,
-        "collision_clearance_validated": True,
-        "tcp_vertical_clearance_conservative_mm": 10.0,
-    })
-    profile_path = tmp_path / "profile.yaml"
-    profile_path.write_text(yaml.safe_dump(profile), encoding="utf-8")
+    profile_path = _admitted_profile(tmp_path)
     result_path = tmp_path / "place-result.json"
     feedback = (
         [10.0] * 3 + [70.0, 75.0, 70.0]

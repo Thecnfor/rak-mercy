@@ -111,6 +111,12 @@ print('target rejected: projector_not_usable_and_validated',file=sys.stderr)
 raise SystemExit(3)
 """)
             executable(fake_scripts / "competition_grasp_feedback_adapter.py", "#!/usr/bin/env python3\n")
+            executable(fake_scripts / "prepare_competition_arms.py", """#!/usr/bin/env python3
+import argparse,json,os
+p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--venue-profile'); a=p.parse_args()
+with open(os.environ['EVENT_LOG'],'a') as stream: stream.write('arm_stow\\n')
+json.dump({'schema':'competition_arm_stow_result/v1','success':True,'order':['left','right'],'commands_emitted':True},open(a.result_json,'w'))
+""")
             executable(fake_scripts / "pick_pen_degraded.py", """#!/usr/bin/env python3
 import argparse,json,os
 p=argparse.ArgumentParser(); p.add_argument('--result-json'); p.add_argument('--showcase-target-json'); p.add_argument('--target-json'); p.add_argument('--feedback-adapter'); p.add_argument('--feedback-json'); p.add_argument('--x-mm'); p.add_argument('--y-mm'); p.add_argument('--venue-profile'); a=p.parse_args()
@@ -166,7 +172,7 @@ json.dump({'schema':'competition_place_execution/v1','success':True,'motion_comp
             self.assertIs(result["showcase_complete"], True)
             self.assertEqual(result["target_source"], "fixed_marker_showcase")
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head", "pick_transport", "goal4_back", "place",
+                "arm_stow", "goal3_right", "head", "pick_transport", "goal4_back", "place",
             ])
 
             executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
@@ -194,7 +200,7 @@ raise SystemExit(3)
             self.assertIs(terminal_result["competition_success"], False)
             self.assertIs(terminal_result["showcase_complete"], True)
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head", "pick_transport", "goal4_back", "place",
+                "arm_stow", "goal3_right", "head", "pick_transport", "goal4_back", "place",
             ])
             env.pop("TARGET_NODE_EXIT_AFTER_REJECTION")
             env["TARGET_STARTUP_SEC"] = "0"
@@ -218,7 +224,7 @@ raise SystemExit(3)
             self.assertIs(strict_result["showcase_complete"], False)
             self.assertIn("competition_target_failed", strict_result["hard_stop_reason"])
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head",
+                "arm_stow", "goal3_right", "head",
             ])
 
             executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
@@ -243,7 +249,7 @@ raise SystemExit(4)
             )
             self.assertIs(config_result["showcase_complete"], False)
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head",
+                "arm_stow", "goal3_right", "head",
             ])
 
             executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
@@ -271,12 +277,12 @@ json.dump({'schema':'competition_pick_target/v1','valid':True,'trusted_for_venue
             self.assertIs(verified_result["object_grasp_verified"], True)
             self.assertEqual(verified_result["target_source"], "live_competition_target")
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head", "pick_transport", "goal4_back", "place",
+                "arm_stow", "goal3_right", "head", "pick_transport", "goal4_back", "place",
             ])
 
             for failed_goal, expected_events in (
-                ("goal3_right", ["goal3_right"]),
-                ("goal4_back", ["goal3_right", "head", "pick_transport", "goal4_back"]),
+                ("goal3_right", ["arm_stow", "goal3_right"]),
+                ("goal4_back", ["arm_stow", "goal3_right", "head", "pick_transport", "goal4_back"]),
             ):
                 executable(fake_scripts / "competition_target_snapshot_adapter.py", """#!/usr/bin/env python3
 import sys
@@ -329,7 +335,7 @@ raise SystemExit(3)
             self.assertIs(plane_result["showcase_complete"], False)
             self.assertIn("showcase target contract failed", plane_result["hard_stop_reason"])
             self.assertEqual(events.read_text(encoding="utf-8").splitlines(), [
-                "goal3_right", "head",
+                "arm_stow", "goal3_right", "head",
             ])
 
     def test_run_defaults_to_showcase_continuation_with_explicit_strict_override(self) -> None:

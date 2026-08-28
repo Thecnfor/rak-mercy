@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import time
 from typing import Any, Callable
 
+from .competition_clearance_evidence import evaluate_profile_clearance
+
 ORIENTATION = (179.99, -12.0, 0.0)
 TRANSPORT_POSE = (300.0, 10.0, 260.0, *ORIENTATION)
 
@@ -43,6 +45,33 @@ class MotionProfile:
                 f"collision_clearance={self.collision_clearance_validated},"
                 f"conservative_clearance_mm={self.conservative_clearance_mm}"
             )
+
+
+def motion_profile_from_venue(path: "Path") -> MotionProfile:
+    """Load kinematics plus hash-bound clearance evidence from one venue YAML."""
+    from pathlib import Path
+
+    profile_path = Path(path)
+    try:
+        import yaml
+
+        document = yaml.safe_load(profile_path.read_text(encoding="utf-8"))
+        transport = document["transport"]
+        kinematics = (
+            transport.get("kinematics_validated") is True
+            and transport.get("joint_limits_passed") is True
+            and float(transport.get("fk_position_residual_mm", float("inf"))) <= 5.0
+            and float(transport.get("fk_orientation_residual_deg", float("inf"))) <= 2.0
+        )
+    except (OSError, KeyError, TypeError, ValueError, AttributeError):
+        kinematics = False
+    admission = evaluate_profile_clearance(profile_path)
+    return MotionProfile(
+        transport_validated=admission.accepted,
+        kinematics_validated=kinematics,
+        collision_clearance_validated=admission.accepted,
+        conservative_clearance_mm=admission.conservative_clearance_mm if admission.accepted else 0.0,
+    )
 
 
 def _pose(x: float, y: float, z: float) -> tuple[float, ...]: return (x, y, z, *ORIENTATION)
