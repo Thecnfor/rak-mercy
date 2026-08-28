@@ -180,6 +180,7 @@ async def run() -> None:
         result["simulation"]={"physics_hz":PHYSICS_HZ,"synthetic_attachment":False,
             "rigid_body_disabled":False,"teleport_used":False,
             "fast_debug":FAST_DEBUG,"debug_only":FAST_DEBUG,
+            "debug_base_teleport_used":False,"debug_base_teleports":[],
             "gpu_found_lost_aggregate_pairs_capacity":found_lost_capacity,
             "gpu_total_aggregate_pairs_capacity":total_capacity}
         if not asset_ok: raise RuntimeError("asset_or_table_height_audit_failed")
@@ -208,6 +209,13 @@ async def run() -> None:
         plan=json.loads(plan_path.read_text(encoding="utf-8")); nav=json.loads(nav_path.read_text(encoding="utf-8"))
         if plan.get("schema")!="isaac_clearance_joint_plan/v1": raise RuntimeError("joint_plan_schema_mismatch")
         if nav.get("schema")!="isaac_clearance_nav_result/v1": raise RuntimeError("nav2_result_schema_mismatch")
+        debug_nav_poses={}
+        if FAST_DEBUG:
+            for table in ("table_1","table_2"):
+                pose=nav.get(f"{table}_base_world_pose")
+                if not isinstance(pose,list) or len(pose)!=3 or not all(math.isfinite(float(v)) for v in pose):
+                    raise RuntimeError(f"debug_nav_pose_missing_or_invalid:{table}")
+                debug_nav_poses[table]=tuple(float(v) for v in pose)
 
         phase="power_on"; forbidden=[]; allowed=[]; all_contacts=[]
         min_arm=float("inf"); min_finger=float("inf")
@@ -253,13 +261,36 @@ async def run() -> None:
                 all_contacts.append(event)
                 (allowed if _contact_allowed(first,second,phase) else forbidden).append(event)
 
+        async def debug_teleport_base(table,teleport_phase):
+            nonlocal phase
+            if not FAST_DEBUG: return
+            phase=teleport_phase
+            x,y,yaw_deg=debug_nav_poses[table]
+            current_position,_=arm.get_world_pose()
+            position=np.asarray([x,y,float(current_position[2])],dtype=float)
+            yaw_rad=math.radians(yaw_deg)
+            orientation=np.asarray([math.cos(yaw_rad/2.0),0.0,0.0,math.sin(yaw_rad/2.0)],dtype=float)
+            timeline.pause()
+            await app.next_update_async()
+            arm.set_world_pose(position=position,orientation=orientation)
+            await app.next_update_async()
+            timeline.play()
+            for _ in range(5): await app.next_update_async()
+            actual_position,actual_orientation=arm.get_world_pose()
+            result["simulation"]["debug_base_teleport_used"]=True
+            result["simulation"]["debug_base_teleports"].append({
+                "phase":teleport_phase,"table":table,
+                "requested_pose_xy_yaw_deg":[x,y,yaw_deg],
+                "actual_position_m":[float(v) for v in actual_position],
+                "actual_orientation_wxyz":[float(v) for v in actual_orientation]})
+
         async def command(controller, names, targets, label, minimum_steps=1):
             nonlocal phase
             phase=label
             requested_names=tuple(names)
             requested_targets=tuple(targets)
             monitored_names=requested_names
-            command_step_rad=MAX_JOINT_STEP_RAD
+            command_step_rad=math.radians(1.0) if FAST_DEBUG else MAX_JOINT_STEP_RAD
             if FAST_DEBUG and requested_names==GRIPPER_NAMES:
                 active_index=GRIPPER_NAMES.index(DEBUG_ACTIVE_GRIPPER_NAMES[0])
                 names=DEBUG_ACTIVE_GRIPPER_NAMES
@@ -296,7 +327,8 @@ async def run() -> None:
                         ",".join(monitored_names[int(index)] for index in nonfinite))
                 return observed
             try:
-                steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-initial)))/command_step_rad)),1)
+                required_minimum_steps=1 if FAST_DEBUG else int(minimum_steps)
+                steps=max(required_minimum_steps,int(math.ceil(float(np.max(np.abs(target-initial)))/command_step_rad)),1)
                 diagnostic["interpolation_frames"]=steps
                 for index in range(1,steps+1):
                     desired=initial+(target-initial)*(index/steps)
@@ -350,9 +382,14 @@ async def run() -> None:
             "power_on_left_rad":initial_left,"power_on_right_rad":initial_right,
             "stow_left_rad":plan["stow_left_rad"],"stow_right_rad":plan["stow_right_rad"]}
 
+        await debug_teleport_base("table_1","before_pick")
         pen_before=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
         pen_peak_z=float(pen_before[2])
+        table_2_teleported=False
         for step in plan["steps"]:
+            if FAST_DEBUG and step["phase"]=="place_pre" and not table_2_teleported:
+                await debug_teleport_base("table_2","before_place")
+                table_2_teleported=True
             if "right_arm_rad" in step: await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"],step.get("interpolation_steps",1))
             elif "right_gripper_rad" in step: await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
         phase="settle"
