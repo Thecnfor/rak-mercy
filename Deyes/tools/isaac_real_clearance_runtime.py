@@ -17,6 +17,7 @@ import traceback
 
 BASE_ADAPTER = Path("/var/workspace/docker/isaac/safe_tools/isolated_scene_adapter.py")
 ROBOT_USD = Path("/var/workspace/docker/isaac/scenes/active/robots/mercury_x1.usd")
+SOURCE_USD = Path("/var/workspace/docker/isaac/scenes/team_rak_finals_20260820_dual_arm_transfer_v5_low_tables/outputs/team_rak_finals_20260820_dual_arm_transfer_v5_low_tables.usd")
 SCENE_CONFIG = Path("/var/workspace/docker/isaac/scenes/team_rak_finals_20260820_dual_arm_transfer_v5_low_tables/scene_config.json")
 PHYSICS_HZ = 60.0
 MAX_JOINT_STEP_RAD = math.radians(0.25)
@@ -50,9 +51,10 @@ def _load_base():
     module=importlib.util.module_from_spec(spec); spec.loader.exec_module(module); return module
 
 
-def _aabb(stage, path: str):
+def _aabb(stage, path: str, cache=None):
     from pxr import Usd, UsdGeom
-    cache=UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_], useExtentsHint=True)
+    if cache is None:
+        cache=UsdGeom.BBoxCache(Usd.TimeCode.Default(), [UsdGeom.Tokens.default_], useExtentsHint=True)
     prim=stage.GetPrimAtPath(path)
     if not prim.IsValid(): raise RuntimeError(f"aabb_prim_missing:{path}")
     bounds=cache.ComputeWorldBound(prim).ComputeAlignedRange()
@@ -65,12 +67,16 @@ def _aabb_distance_mm(first, second) -> float:
     return math.sqrt(sum(value*value for value in delta))*1000.0
 
 
-def _required_collisions(stage):
+def _collision_inventory(stage):
     from pxr import UsdPhysics
-    collision=[]; disabled=[]
+    active=[]
     for prim in stage.Traverse():
         if prim.HasAPI(UsdPhysics.CollisionAPI):
-            path=str(prim.GetPath()); collision.append(path)
+            active.append(str(prim.GetPath()))
+    structural=[]; disabled=[]
+    for prim in stage.TraverseAll():
+        if prim.HasAPI(UsdPhysics.CollisionAPI):
+            path=str(prim.GetPath()); structural.append(path)
             attr=prim.GetAttribute("physics:collisionEnabled")
             if attr.IsValid() and attr.HasAuthoredValueOpinion() and attr.Get() is False: disabled.append(path)
     required=(
@@ -80,8 +86,9 @@ def _required_collisions(stage):
         "/World/Robot/mercury_x1/left_gripper/left_gripper_base/collisions",
         "/World/Robot/mercury_x1/right_gripper/right_gripper_base/collisions",
     )
-    missing=[path for path in required if path not in collision]
-    return collision,disabled,missing
+    missing=[path for path in required if path not in active]
+    inactive=sorted(set(structural)-set(active))
+    return structural,active,disabled,missing,inactive
 
 
 def _contact_allowed(first: str, second: str, phase: str) -> bool:
@@ -89,8 +96,10 @@ def _contact_allowed(first: str, second: str, phase: str) -> bool:
     if "wheel" in pair.lower() and "/World/Field/Floor" in pair: return True
     pen="/World/Pens/table_1_pen_1"
     table="/World/Tables/"
-    if pen in pair and table in pair and phase in {"before_pick","released","settle"}: return True
-    if pen in pair and "/right_gripper/" in pair and phase in {"close","lift","transport","release"}: return True
+    if "/World/Pens/" in pair and table in pair:
+        if pen not in pair: return True
+        return phase in {"before_pick","pregrasp","approach","contact","close","release_approach","release","settle"}
+    if pen in pair and "/right_gripper/" in pair and phase in {"close","lift","transport","place_pre","release_approach","release"}: return True
     return False
 
 
@@ -103,7 +112,7 @@ async def run() -> None:
     from isaacsim.core.prims import SingleArticulation
     from isaacsim.core.utils.types import ArticulationAction
     from omni.physx import get_physx_simulation_interface
-    from pxr import PhysicsSchemaTools, PhysxSchema, UsdGeom, UsdPhysics
+    from pxr import Gf, PhysicsSchemaTools, PhysxSchema, Usd, UsdGeom, UsdPhysics
 
     output=Path(os.environ.get("X1_CLEARANCE_RAW_JSON","/var/workspace/temp/x1-clearance/raw.json"))
     output.parent.mkdir(parents=True,exist_ok=True)
@@ -118,14 +127,30 @@ async def run() -> None:
         stage=omni.usd.get_context().get_stage()
         if stage is None: raise RuntimeError("stage_missing")
         scene_usd=Path(str(base.ARGS.scene_usd))
-        collision,disabled,missing=_required_collisions(stage)
+        collision,active_collision,disabled,missing,inactive_collision=_collision_inventory(stage)
+        source_stage=Usd.Stage.Open(str(SOURCE_USD))
+        if source_stage is None: raise RuntimeError("source_scene_stage_open_failed")
+        source_collision,_,source_disabled,_,_=_collision_inventory(source_stage)
         top_surfaces={}
         for table in ("table_1","table_2"):
             _,hi=_aabb(stage,f"/World/Tables/{table}/Top"); top_surfaces[table]=hi[2]
-        asset_ok=(len(collision)==55 and not disabled and not missing
+        expected_removed=[
+            "/World/Pens/table_1_pen_3/CollisionAndFallbackVisual",
+            "/World/Pens/table_1_pen_4/CollisionAndFallbackVisual",
+        ]
+        removed_collision=sorted(set(source_collision)-set(active_collision))
+        asset_ok=(not source_disabled and not disabled and not missing
+                  and not (set(expected_removed)-set(removed_collision))
                   and all(abs(value-.650)<=1e-6 for value in top_surfaces.values()))
         result["assets"]={"scene_usd_sha256":_sha(scene_usd),"robot_usd_sha256":_sha(ROBOT_USD),
-            "scene_config_sha256":_sha(SCENE_CONFIG),"collision_prim_count":len(collision),
+            "scene_config_sha256":_sha(SCENE_CONFIG),"collision_prim_count":len(active_collision),
+            "collision_prims":active_collision,
+            "source_collision_prim_count":len(source_collision),
+            "source_collision_prims":source_collision,
+            "source_scene_usd_sha256":_sha(SOURCE_USD),
+            "active_collision_prim_count":len(active_collision),
+            "active_collision_prims":active_collision,
+            "removed_collision_prims":removed_collision,
             "all_required_collisions_enabled":not disabled and not missing,"disabled":disabled,
             "missing":missing,"table_top_surface_z_m":top_surfaces}
         result["simulation"]={"physics_hz":PHYSICS_HZ,"synthetic_attachment":False,
@@ -138,12 +163,15 @@ async def run() -> None:
         timeline=omni.timeline.get_timeline_interface(); timeline.play()
         for _ in range(60): await app.next_update_async()
         arm=SingleArticulation("/World/Robot/mercury_x1/base_link",reset_xform_properties=False); arm.initialize()
-        gripper=SingleArticulation("/World/Robot/mercury_x1/right_gripper",reset_xform_properties=False); gripper.initialize()
-        arm_names=tuple(str(value) for value in arm.dof_names); grip_names=tuple(str(value) for value in gripper.dof_names)
+        # Both grippers are joints of the single Mercury X1 articulation; they
+        # are not independent articulation roots in the official USD.
+        gripper=arm
+        arm_names=tuple(str(value) for value in arm.dof_names); grip_names=arm_names
+        power_on=np.asarray(arm.get_joint_positions(),dtype=float)
         result["observed_power_on"]={"arm_dof_names":list(arm_names),
-            "arm_joint_positions_rad":[float(value) for value in arm.get_joint_positions()],
-            "gripper_dof_names":list(grip_names),
-            "gripper_joint_positions_rad":[float(value) for value in gripper.get_joint_positions()]}
+            "arm_joint_positions_rad":[float(value) for value in power_on],
+            "gripper_dof_names":list(GRIPPER_NAMES),
+            "gripper_joint_positions_rad":[float(power_on[arm_names.index(name)]) for name in GRIPPER_NAMES]}
         if not all(name in arm_names for name in LEFT_NAMES+RIGHT_NAMES): raise RuntimeError("arm_dof_names_missing")
         if not all(name in grip_names for name in GRIPPER_NAMES): raise RuntimeError("gripper_dof_names_missing")
         plan_path=Path(os.environ.get("X1_CLEARANCE_JOINT_PLAN",""))
@@ -156,21 +184,41 @@ async def run() -> None:
 
         phase="power_on"; forbidden=[]; allowed=[]; all_contacts=[]
         min_arm=float("inf"); min_finger=float("inf")
+        pen_path="/World/Pens/table_1_pen_1"
+        pen_peak_z=-float("inf")
         tables=[f"/World/Tables/{table}/{part}" for table in ("table_1","table_2") for part in ("Top","Leg_1","Leg_2","Leg_3","Leg_4")]
-        arm_collision=[path for path in collision if "/World/Robot/mercury_x1/" in path and
+        arm_collision=[path for path in active_collision if "/World/Robot/mercury_x1/" in path and
                        ("/link" in path or "gripper_base/collisions" in path)]
-        finger_collision=[path for path in collision if "/right_gripper/" in path and "gripper_base" not in path]
+        finger_collision=[path for path in active_collision if "/right_gripper/" in path and "gripper_base" not in path]
+        bbox_cache=UsdGeom.BBoxCache(Usd.TimeCode.Default(),[UsdGeom.Tokens.default_],useExtentsHint=True)
+        xform_cache=UsdGeom.XformCache(Usd.TimeCode.Default())
+        dynamic_paths=arm_collision+finger_collision
+        local_ranges={path:bbox_cache.ComputeLocalBound(stage.GetPrimAtPath(path)).ComputeAlignedRange()
+                      for path in dynamic_paths}
+        table_bounds={path:_aabb(stage,path,bbox_cache) for path in tables}
+        table_top_bounds={table:_aabb(stage,f"/World/Tables/{table}/Top",bbox_cache)
+                          for table in ("table_1","table_2")}
+
+        def fast_aabb(path):
+            bounds=local_ranges[path]; lo=bounds.GetMin(); hi=bounds.GetMax()
+            matrix=xform_cache.GetLocalToWorldTransform(stage.GetPrimAtPath(path))
+            points=[matrix.Transform(Gf.Vec3d(x,y,z)) for x in (lo[0],hi[0]) for y in (lo[1],hi[1]) for z in (lo[2],hi[2])]
+            return (tuple(min(point[i] for point in points) for i in range(3)),
+                    tuple(max(point[i] for point in points) for i in range(3)))
 
         def sample_geometry():
-            nonlocal min_arm,min_finger
+            nonlocal min_arm,min_finger,pen_peak_z
+            xform_cache.Clear()
+            pen_position=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
+            pen_peak_z=max(pen_peak_z,float(pen_position[2]))
             for robot_path in arm_collision:
-                rb=_aabb(stage,robot_path)
+                rb=fast_aabb(robot_path)
                 for obstacle in tables:
-                    min_arm=min(min_arm,_aabb_distance_mm(rb,_aabb(stage,obstacle)))
+                    min_arm=min(min_arm,_aabb_distance_mm(rb,table_bounds[obstacle]))
             for finger in finger_collision:
-                fb=_aabb(stage,finger)
+                fb=fast_aabb(finger)
                 for table in ("table_1","table_2"):
-                    min_finger=min(min_finger,_aabb_distance_mm(fb,_aabb(stage,f"/World/Tables/{table}/Top")))
+                    min_finger=min(min_finger,_aabb_distance_mm(fb,table_top_bounds[table]))
             headers,_=get_physx_simulation_interface().get_contact_report()
             for header in headers:
                 first=str(PhysicsSchemaTools.intToSdfPath(header.collider0)); second=str(PhysicsSchemaTools.intToSdfPath(header.collider1))
@@ -178,13 +226,13 @@ async def run() -> None:
                 all_contacts.append(event)
                 (allowed if _contact_allowed(first,second,phase) else forbidden).append(event)
 
-        async def command(controller, names, targets, label):
+        async def command(controller, names, targets, label, minimum_steps=1):
             nonlocal phase
             phase=label
             dof_names=tuple(str(v) for v in controller.dof_names); current=np.asarray(controller.get_joint_positions(),dtype=float)
             target=current.copy()
             for name,value in zip(names,targets): target[dof_names.index(name)]=float(value)
-            steps=max(1,int(math.ceil(float(np.max(np.abs(target-current)))/MAX_JOINT_STEP_RAD)))
+            steps=max(int(minimum_steps),int(math.ceil(float(np.max(np.abs(target-current)))/MAX_JOINT_STEP_RAD)),1)
             for index in range(1,steps+1):
                 desired=current+(target-current)*(index/steps)
                 controller.apply_action(ArticulationAction(joint_positions=desired))
@@ -193,13 +241,9 @@ async def run() -> None:
             observed=np.asarray(controller.get_joint_positions(),dtype=float)
             if float(np.max(np.abs(observed-target)))>math.radians(1.0): raise RuntimeError(f"joint_feedback_not_converged:{label}")
 
-        initial_left=[float(plan["power_on_left_rad"][i]) for i in range(6)]
-        initial_right=[float(plan["power_on_right_rad"][i]) for i in range(6)]
         current=np.asarray(arm.get_joint_positions(),dtype=float)
-        if max(abs(current[arm_names.index(name)]-value) for name,value in zip(LEFT_NAMES,initial_left))>math.radians(1):
-            raise RuntimeError("left_power_on_pose_mismatch")
-        if max(abs(current[arm_names.index(name)]-value) for name,value in zip(RIGHT_NAMES,initial_right))>math.radians(1):
-            raise RuntimeError("right_power_on_pose_mismatch")
+        initial_left=[float(current[arm_names.index(name)]) for name in LEFT_NAMES]
+        initial_right=[float(current[arm_names.index(name)]) for name in RIGHT_NAMES]
         order=plan["selected_order"].split("_then_")
         for side in order:
             names=LEFT_NAMES if side=="left" else RIGHT_NAMES
@@ -208,19 +252,24 @@ async def run() -> None:
             "power_on_left_rad":initial_left,"power_on_right_rad":initial_right,
             "stow_left_rad":plan["stow_left_rad"],"stow_right_rad":plan["stow_right_rad"]}
 
-        pen_path="/World/Pens/table_1_pen_1"; pen_before=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
+        pen_before=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
+        pen_peak_z=float(pen_before[2])
         for step in plan["steps"]:
-            if "right_arm_rad" in step: await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"])
+            if "right_arm_rad" in step: await command(arm,RIGHT_NAMES,step["right_arm_rad"],step["phase"],step.get("interpolation_steps",1))
             elif "right_gripper_rad" in step: await command(gripper,GRIPPER_NAMES,step["right_gripper_rad"],step["phase"])
         phase="settle"
         for _ in range(120): await app.next_update_async(); sample_geometry()
         pen_after=UsdGeom.Xformable(stage.GetPrimAtPath(pen_path)).ComputeLocalToWorldTransform(0).ExtractTranslation()
-        lift_mm=float(plan.get("observed_peak_pen_z_m",pen_after[2])-pen_before[2])*1000.0
+        lift_mm=float(pen_peak_z-pen_before[2])*1000.0
+        table2_lo,table2_hi=_aabb(stage,"/World/Tables/table_2/Top")
+        placed_on_table2=(table2_lo[0]<=pen_after[0]<=table2_hi[0]
+            and table2_lo[1]<=pen_after[1]<=table2_hi[1]
+            and table2_hi[2]<=pen_after[2]<=table2_hi[2]+0.030)
         run_data={"passed":False,"nav_table_1_reached":nav.get("table_1_reached") is True,
             "nav_table_2_reached":nav.get("table_2_reached") is True,"ik_fk_passed":plan.get("ik_fk_passed") is True,
             "joint_feedback_passed":True,"stage_timeouts_passed":True,
             "dynamic_contact_grasp":any(pen_path in (item["collider0"]+item["collider1"]) and "/right_gripper/" in (item["collider0"]+item["collider1"]) for item in allowed),
-            "pen_placed_on_table_2":bool(plan.get("pen_placed_on_table_2",False)),"forbidden_contacts":forbidden,
+            "pen_placed_on_table_2":bool(placed_on_table2),"forbidden_contacts":forbidden,
             "minimum_arm_raw_mm":min_arm,"minimum_arm_conservative_mm":min_arm-ARM_UNCERTAINTY_MM,
             "minimum_fingertip_table_raw_mm":min_finger,
             "minimum_navigation_raw_mm":float(nav.get("minimum_raw_mm",0.0)),

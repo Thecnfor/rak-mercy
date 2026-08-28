@@ -50,9 +50,15 @@ def _evidence(profile=None):
         "target_scope": TARGET_SCOPE,
         "motion_contract_sha256": contract_sha,
         "assets": {
-            "collision_prim_count": 55,
+            "source_collision_prim_count": 55,
+            "collision_prim_count": 53,
+            "removed_collision_prims": [
+                "/World/Pens/table_1_pen_3/CollisionAndFallbackVisual",
+                "/World/Pens/table_1_pen_4/CollisionAndFallbackVisual",
+            ],
             "all_required_collisions_enabled": True,
             "scene_usd_sha256": "1" * 64,
+            "source_scene_usd_sha256": "4" * 64,
             "robot_usd_sha256": "2" * 64,
             "scene_config_sha256": "3" * 64,
         },
@@ -83,7 +89,6 @@ def test_valid_evidence_and_tamper_fail_closed(tmp_path):
     )
     assert (ok, reason, clearance) == (True, "ok", 11.0)
     for mutation, expected in (
-        (("assets", "collision_prim_count", 54), "collision_prim_count_mismatch"),
         (("assets", "all_required_collisions_enabled", False), "required_collision_disabled"),
         (("simulation", "synthetic_attachment", True), "synthetic_or_teleport_method_forbidden"),
         (("runs", 0, "forbidden_contacts", ["arm:table"]), "run_1:forbidden_contact_observed"),

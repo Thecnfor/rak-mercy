@@ -12,6 +12,7 @@ from typing import Any, Mapping
 SOURCE_HEIGHT_M = 0.80
 TARGET_HEIGHT_M = 0.65
 PEN_CENTER_ABOVE_TABLE_M = 0.008
+MAX_ACTIVE_PENS = 2
 
 
 def _sha256(path: Path) -> str:
@@ -94,13 +95,21 @@ def build_scene_override(
         )
         {{
         }}'''
-        for pen_name in pen_names[1:]
+        for pen_name in pen_names[MAX_ACTIVE_PENS:]
     )
     pen_center_z = TARGET_HEIGHT_M + PEN_CENTER_ABOVE_TABLE_M
-    retained_xy = fixed_poses[0].get("center_xy_m")
-    if not isinstance(retained_xy, list) or len(retained_xy) != 2:
-        raise ValueError("retained_pen_center_xy_missing")
-    pen_x, pen_y = (float(value) for value in retained_xy)
+    retained_blocks=[]
+    for index, pen_name in enumerate(pen_names[:MAX_ACTIVE_PENS]):
+        retained_xy = fixed_poses[index].get("center_xy_m")
+        if not isinstance(retained_xy, list) or len(retained_xy) != 2:
+            raise ValueError("retained_pen_center_xy_missing")
+        pen_x, pen_y = (float(value) for value in retained_xy)
+        retained_blocks.append(f'''        over "{pen_name}"
+        {{
+            double3 xformOp:translate = ({pen_x:.9f}, {pen_y:.9f}, {pen_center_z:.3f})
+            custom string teamRak:competitionPenSelection = "two_pen_fixture"
+        }}''')
+    retained_pens = "\n".join(retained_blocks)
     layer = f'''#usda 1.0
 (
     subLayers = [@{source_usd}@]
@@ -123,11 +132,7 @@ over "World"
     }}
     over "Pens"
     {{
-        over "{pen_names[0]}"
-        {{
-            double3 xformOp:translate = ({pen_x:.9f}, {pen_y:.9f}, {pen_center_z:.3f})
-            custom string teamRak:competitionPenSelection = "single_pen_fixture"
-        }}
+{retained_pens}
 {hidden_pens}
     }}
     over "Robot"
@@ -158,9 +163,13 @@ over "World"
         "override_table_height_m": TARGET_HEIGHT_M,
         "height_delta_m": round(TARGET_HEIGHT_M - SOURCE_HEIGHT_M, 9),
         "source_pen_count": len(pen_names),
-        "override_pen_count": 1,
-        "retained_pen_prim": f"/World/Pens/{pen_names[0]}",
-        "deactivated_pen_prims": [f"/World/Pens/{name}" for name in pen_names[1:]],
+        "override_pen_count": min(MAX_ACTIVE_PENS, len(pen_names)),
+        "retained_pen_prims": [
+            f"/World/Pens/{name}" for name in pen_names[:MAX_ACTIVE_PENS]
+        ],
+        "deactivated_pen_prims": [
+            f"/World/Pens/{name}" for name in pen_names[MAX_ACTIVE_PENS:]
+        ],
         "physical_parameters_modified": False,
         "claims": {
             "simulation_only": True,

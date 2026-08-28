@@ -22,7 +22,19 @@ python3 "$REPO_ROOT/Deyes/tools/generate_competition_65cm_scene_override.py" \
   --source-config "$SOURCE_CONFIG" --source-usd "$SOURCE_USD" \
   --output-usda "$OVERRIDE_USD" --output-manifest "$OVERRIDE_MANIFEST"
 
-export OMNI_KIT_ACCEPT_EULA=YES ROS_DOMAIN_ID=46 ROS_DISTRO=jazzy
+if [[ ! -s "$JOINT_PLAN" ]]; then
+  PYTHONPATH="$REPO_ROOT/Deyes/src/deyes_ik_server" \
+    /home/socl/miniconda3/envs/isaacsim51/bin/python \
+    "$REPO_ROOT/Deyes/tools/generate_isaac_clearance_joint_plan.py" \
+    --urdf "$REPO_ROOT/Deyes/test/fixtures/mercury_x1_official_527e1c787c2b.urdf" \
+    --profile "$PROFILE" --scene-usd "$OVERRIDE_USD" --output "$JOINT_PLAN"
+fi
+if [[ ! -s "$NAV_RESULT" ]]; then
+  echo "Clearance acceptance FAILED closed: real Nav2 result is missing: $NAV_RESULT" >&2
+  exit 24
+fi
+
+export OMNI_KIT_ACCEPT_EULA=YES ROS_DOMAIN_ID=46 ROS_DISTRO=jazzy X1_EXECUTE=1
 export RMW_IMPLEMENTATION=rmw_fastrtps_cpp X1_NAMESPACE=x1_sim
 export X1_SCENE_USD="$OVERRIDE_USD"
 export X1_CLEARANCE_JOINT_PLAN="$JOINT_PLAN" X1_CLEARANCE_NAV_RESULT="$NAV_RESULT"
@@ -35,7 +47,8 @@ for repeat in 1 2; do
   export X1_CLEARANCE_RAW_JSON="$raw"
   set +e
   timeout "${X1_ISAAC_TIMEOUT_SEC:-600}" /home/socl/miniconda3/envs/isaacsim51/bin/isaacsim \
-    isaacsim.exp.full.kit --no-window --exec "$REPO_ROOT/Deyes/tools/isaac_real_clearance_runtime.py" \
+    isaacsim.exp.full.kit --no-window --/telemetry/enableAnonymousData=false \
+    --exec "$REPO_ROOT/Deyes/tools/isaac_real_clearance_runtime.py" \
     >"$log" 2>&1
   rc=$?
   set -e

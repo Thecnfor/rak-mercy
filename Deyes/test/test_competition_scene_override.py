@@ -3,7 +3,7 @@ from pathlib import Path
 from generate_competition_65cm_scene_override import build_scene_override
 
 
-def test_override_lowers_both_tables_and_keeps_exactly_one_pen(tmp_path: Path):
+def test_override_lowers_both_tables_and_keeps_at_most_two_pens(tmp_path: Path):
     source_usd = tmp_path / "source.usd"
     source_usd.write_bytes(b"source-scene")
     source_config = {
@@ -13,7 +13,7 @@ def test_override_lowers_both_tables_and_keeps_exactly_one_pen(tmp_path: Path):
             {"id": "table_2", "height_m": 0.80, "top_thickness_m": 0.05, "scene_bbox_xy_m": [2.55, 0.0, 3.19, 0.28]},
         ],
         "pens": {"source_table_id": "table_1", "fixed_poses": [
-            {"center_xy_m": [3.49, 0.84]}, {}, {}, {}
+            {"center_xy_m": [3.49, 0.84]}, {"center_xy_m": [3.49, 0.62]}, {}, {}
         ]},
     }
 
@@ -24,11 +24,14 @@ def test_override_lowers_both_tables_and_keeps_exactly_one_pen(tmp_path: Path):
     assert manifest["override_table_height_m"] == 0.65
     assert manifest["height_delta_m"] == -0.15
     assert manifest["source_pen_count"] == 4
-    assert manifest["override_pen_count"] == 1
+    assert manifest["override_pen_count"] == 2
+    assert manifest["retained_pen_prims"] == [
+        "/World/Pens/table_1_pen_1", "/World/Pens/table_1_pen_2"
+    ]
     assert manifest["physical_parameters_modified"] is False
     assert 'over "table_1"' in layer and 'over "table_2"' in layer
-    assert layer.count("double3 xformOp:translate") == 11
-    assert layer.count("active = false") == 3
+    assert layer.count("double3 xformOp:translate") == 12
+    assert layer.count("active = false") == 2
     assert "0.625" in layer
     assert "0.658" in layer
     assert "physxScene:timeStepsPerSecond = 60" in layer

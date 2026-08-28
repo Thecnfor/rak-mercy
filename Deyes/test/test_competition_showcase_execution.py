@@ -39,7 +39,7 @@ def _admitted_profile(tmp_path: Path, *, clearance: float = 10.0) -> Path:
         "target_scope": "fixed_target_400_10_only", "motion_contract_sha256": contract_sha,
         "assets": {"collision_prim_count": 55, "all_required_collisions_enabled": True,
                    "scene_usd_sha256": "1"*64, "robot_usd_sha256": "2"*64,
-                   "scene_config_sha256": "3"*64},
+                   "scene_config_sha256": "3"*64, "source_scene_usd_sha256": "4"*64},
         "simulation": {"physics_hz": 60.0, "synthetic_attachment": False,
                        "rigid_body_disabled": False, "teleport_used": False},
         "initial_pose": {"both_arms_auto_stowed": True, "selected_order": "left_then_right",

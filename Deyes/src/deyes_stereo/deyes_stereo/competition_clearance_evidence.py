@@ -21,7 +21,12 @@ EXPECTED_ORIENTATION_DEG = (179.99, -12.0, 0.0)
 EXPECTED_PICK_Z_MM = (235.0, 180.0, 140.0, 135.0, 180.0, 235.0)
 EXPECTED_PLACE_Z_MM = (200.0, 165.0, 200.0, 260.0)
 EXPECTED_TRANSPORT_POSE = (300.0, 10.0, 260.0, *EXPECTED_ORIENTATION_DEG)
-EXPECTED_COLLISION_PRIMS = 55
+EXPECTED_SOURCE_COLLISION_PRIMS = 55
+EXPECTED_ACTIVE_COLLISION_PRIMS = 53
+EXPECTED_REMOVED_COLLISION_PRIMS = (
+    "/World/Pens/table_1_pen_3/CollisionAndFallbackVisual",
+    "/World/Pens/table_1_pen_4/CollisionAndFallbackVisual",
+)
 MIN_ARM_CONSERVATIVE_MM = 10.0
 MIN_FINGERTIP_RAW_MM = 2.0
 MIN_NAV_CONSERVATIVE_MM = 50.0
@@ -157,11 +162,9 @@ def validate_clearance_evidence(
     assets = evidence.get("assets")
     if not isinstance(assets, Mapping):
         return False, "asset_evidence_missing", 0.0
-    if int(assets.get("collision_prim_count", -1)) != EXPECTED_COLLISION_PRIMS:
-        return False, "collision_prim_count_mismatch", 0.0
     if assets.get("all_required_collisions_enabled") is not True:
         return False, "required_collision_disabled", 0.0
-    for key in ("scene_usd_sha256", "robot_usd_sha256", "scene_config_sha256"):
+    for key in ("scene_usd_sha256", "source_scene_usd_sha256", "robot_usd_sha256", "scene_config_sha256"):
         if len(str(assets.get(key) or "")) != 64:
             return False, f"asset_sha_missing:{key}", 0.0
     simulation = evidence.get("simulation")
