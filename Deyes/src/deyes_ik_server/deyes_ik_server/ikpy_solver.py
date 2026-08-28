@@ -19,6 +19,9 @@ Design notes:
 from __future__ import annotations
 
 import math
+import os
+import tempfile
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -61,7 +64,9 @@ def _build_active_links_mask(urdf_path: str, side: str) -> list[bool]:
     inactive joint7 sit at 0 (its URDF origin offset stays applied).
     """
     _ensure_ikpy()
-    chain = ikpy.chain.Chain.from_urdf_file(urdf_path, last_link_vector=None)
+    chain = ikpy.chain.Chain.from_urdf_file(
+        urdf_path, base_elements=_arm_base_elements(side), last_link_vector=None
+    )
     arm_names = set(arm_joint_names(side))
     mask: list[bool] = []
     for link in chain.links:
@@ -86,6 +91,36 @@ def _build_active_links_mask(urdf_path: str, side: str) -> list[bool]:
     return mask
 
 
+def _arm_base_elements(side: str) -> list[str]:
+    suffix = "R" if side == "right" else "L"
+    elements = ["link_body"]
+    # The production contract's TCP is link6_{R,L}; joint7 is a fixed wrist
+    # roll in firmware and its URDF offset must not be appended to that TCP.
+    for index in range(1, 7):
+        elements.extend((f"joint{index}_{suffix}", f"link{index}_{suffix}"))
+    return elements
+
+
+def _link6_tcp_urdf(urdf_path: str, side: str) -> str:
+    """Create a temporary URDF whose selected arm terminates at link6.
+
+    ikpy otherwise follows the URDF tree through joint7 automatically even
+    when that joint is inactive, shifting the requested link6 TCP by joint7's
+    fixed geometric offset.
+    """
+    root = ET.parse(urdf_path).getroot()
+    suffix = "R" if side == "right" else "L"
+    for element in list(root):
+        if element.tag == "joint" and element.attrib.get("name") == f"joint7_{suffix}":
+            root.remove(element)
+        elif element.tag == "link" and element.attrib.get("name") == f"link7_{suffix}":
+            root.remove(element)
+    handle = tempfile.NamedTemporaryFile(prefix=f"mercury_x1_{side}_link6_", suffix=".urdf", delete=False)
+    handle.close()
+    ET.ElementTree(root).write(handle.name, encoding="utf-8", xml_declaration=True)
+    return handle.name
+
+
 @dataclass
 class IkResult:
     success: bool
@@ -93,6 +128,7 @@ class IkResult:
     failure_code: str = ""
     iterations: int = 0
     residual_m: float = 0.0
+    orientation_residual_deg: float = 0.0
 
 
 class IkpySolver7DOF:
@@ -104,12 +140,17 @@ class IkpySolver7DOF:
             raise ValueError(f"arm_side must be 'left' or 'right', got {arm_side!r}")
         self.urdf_path = urdf_path or resolve_urdf()
         _ensure_ikpy()
-        mask = _build_active_links_mask(self.urdf_path, self.arm_side)
-        self._chain = ikpy.chain.Chain.from_urdf_file(
-            self.urdf_path,
-            active_links_mask=mask,
-            last_link_vector=None,
-        )
+        chain_urdf = _link6_tcp_urdf(self.urdf_path, self.arm_side)
+        try:
+            mask = _build_active_links_mask(chain_urdf, self.arm_side)
+            self._chain = ikpy.chain.Chain.from_urdf_file(
+                chain_urdf,
+                base_elements=_arm_base_elements(self.arm_side),
+                active_links_mask=mask,
+                last_link_vector=None,
+            )
+        finally:
+            os.unlink(chain_urdf)
         self._n_active = sum(mask)
         # Cache the last joint solution so consecutive ExecuteCartesianStage
         # calls can seed the optimizer with the arm's current pose.
@@ -137,13 +178,14 @@ class IkpySolver7DOF:
         if not _np().all(_np().isfinite(target_position)):
             return IkResult(False, [], failure_code="POSE_NONFINITE")
 
-        target_orientation = self._euler_deg_to_quat(pose_base[3:6])
+        target_orientation = self._euler_deg_to_matrix(pose_base[3:6])
 
         initial = self._compose_initial_state(current_joint_deg)
         try:
             joint_full = self._chain.inverse_kinematics(
                 target_position=target_position,
                 target_orientation=target_orientation,
+                orientation_mode="all",
                 initial_position=initial,
                 max_iter=max_iter,
             )
@@ -155,7 +197,11 @@ class IkpySolver7DOF:
         # ikpy returns one angle per chain link. Index 0 is the (inactive)
         # base, indices 1..N_active are the actuated joints, then any
         # inactive joints at the tail (e.g. joint7 wrist roll on X1).
-        active = list(joint_full[1 : 1 + self._n_active])
+        active = [
+            joint_full[index]
+            for index, enabled in enumerate(self._chain.active_links_mask)
+            if enabled
+        ]
         # ikpy returns radians; Action contract and pymycobot expect degrees.
         joint_deg = [math.degrees(float(v)) for v in active]
 
@@ -163,13 +209,23 @@ class IkpySolver7DOF:
         np = _np()
         fk = self._chain.forward_kinematics(joint_full)
         pos_err = float(np.linalg.norm(np.asarray(fk[:3, 3]) - target_position))
+        relative = target_orientation.T @ np.asarray(fk[:3, :3])
+        cosine = max(-1.0, min(1.0, (float(np.trace(relative)) - 1.0) / 2.0))
+        orientation_err = math.degrees(math.acos(cosine))
         if pos_err > tol_m:
             return IkResult(False, joint_deg,
                             failure_code=f"FK_RESIDUAL_{pos_err:.4f}_M",
-                            residual_m=pos_err)
+                            residual_m=pos_err,
+                            orientation_residual_deg=orientation_err)
+        if orientation_err > 3.0:
+            return IkResult(False, joint_deg,
+                            failure_code=f"FK_ORIENTATION_RESIDUAL_{orientation_err:.3f}_DEG",
+                            residual_m=pos_err,
+                            orientation_residual_deg=orientation_err)
 
         self._last_joint_deg = joint_deg
-        return IkResult(success=True, joint_deg=joint_deg, residual_m=pos_err)
+        return IkResult(success=True, joint_deg=joint_deg, residual_m=pos_err,
+                        orientation_residual_deg=orientation_err)
 
     # ---- helpers ---------------------------------------------------
 
@@ -180,24 +236,26 @@ class IkpySolver7DOF:
         actuated joints; everything after N_active stays 0.
         ikpy uses radian angles throughout.
         """
-        state = _np().zeros(self._chain.length)
+        state = _np().zeros(len(self._chain.links))
         seed = current_joint_deg or self._last_joint_deg
         if seed is None:
             # Vendor-probed observation pose for Mercury X1 right arm
             # (joints 1..6 only — joint7 wrist roll is fixed).
             seed = self.OBSERVATION_POSE_RIGHT_DEG
-        for i in range(min(self._n_active, len(seed))):
-            state[1 + i] = math.radians(float(seed[i]))
+        for index, value in zip(
+            (i for i, enabled in enumerate(self._chain.active_links_mask) if enabled), seed
+        ):
+            state[index] = math.radians(float(value))
         return state
 
     @staticmethod
-    def _euler_deg_to_quat(euler_xyz_deg: list[float]):
+    def _euler_deg_to_matrix(euler_xyz_deg: list[float]):
         from scipy.spatial.transform import Rotation as R
 
         np = _np()
         if not np.all(np.isfinite(euler_xyz_deg)):
-            return np.array([0.0, 0.0, 0.0, 1.0])
-        return R.from_euler("xyz", euler_xyz_deg, degrees=True).as_quat()  # [x,y,z,w]
+            return np.eye(3)
+        return R.from_euler("xyz", euler_xyz_deg, degrees=True).as_matrix()
 
     # Convenience: vendor-probed observation pose in degrees.
     # Matches pick_pen_hardcoded.py exactly so IK seed is consistent.

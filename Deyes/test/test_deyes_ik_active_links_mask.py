@@ -13,7 +13,7 @@ class FakeChainFactory:
     link_names = ()
 
     @classmethod
-    def from_urdf_file(cls, _path, last_link_vector=None):
+    def from_urdf_file(cls, _path, last_link_vector=None, **_kwargs):
         return SimpleNamespace(links=[SimpleNamespace(name=name) for name in cls.link_names])
 
 
